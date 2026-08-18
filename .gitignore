@@ -1,0 +1,21 @@
+# Generated sites and their data
+sites/*
+!sites/.gitkeep
+
+# Optional local import sources (user-supplied, never committed)
+wpress/*
+!wpress/.gitkeep
+dbs/*
+!dbs/.gitkeep
+files/*
+!files/.gitkeep
+plugins/*
+!plugins/.gitkeep
+
+# TLS certificates (generated per-machine by mkcert)
+proxy/certs/*
+!proxy/certs/.gitkeep
+
+# OS / editor cruft
+.DS_Store
+*.swp

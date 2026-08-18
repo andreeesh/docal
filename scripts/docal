@@ -1,0 +1,925 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve real path (follows symlinks so it works from /usr/local/bin)
+DOCAL_BIN="$(readlink -f "${BASH_SOURCE[0]}")"
+DOCAL_DIR="$(cd "$(dirname "${DOCAL_BIN}")/.." && pwd)"
+SITES_DIR="${DOCAL_DIR}/sites"
+SCRIPTS_DIR="${DOCAL_DIR}/scripts"
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
+info() { echo -e "${BLUE}[docal]${NC} $*"; }
+ok()   { echo -e "${GREEN}[ok]${NC} $*"; }
+warn() { echo -e "${YELLOW}[warn]${NC} $*" >&2; }
+err()  { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
+
+require_site() {
+  [[ -z "${1:-}" ]] && err "Site name required. Usage: docal ${COMMAND} <site>"
+  [[ ! -d "${SITES_DIR}/${1}" ]] && err "Site '${1}' not found. List sites with: docal list"
+  return 0
+}
+
+# ── docker preflight (install/start Docker Engine natively in WSL) ───────────
+docker_is_native() {
+  command -v docker >/dev/null 2>&1 || return 1
+  # Docker Desktop's WSL integration exposes a shim under /mnt/c/... — that's
+  # not a native install and won't respond once Desktop is closed.
+  [[ "$(command -v docker)" != /mnt/* ]]
+}
+
+install_docker_engine() {
+  info "Docker not found. Installing Docker Engine..."
+
+  # Best-effort: an unrelated broken third-party repo (e.g. cloudflared) makes
+  # apt-get update exit non-zero even though the repos we actually need are fine.
+  # Don't let set -e kill the whole install over that.
+  sudo apt-get update -y || warn "apt-get update reported errors from unrelated repositories; continuing."
+  sudo apt-get install -y ca-certificates curl
+  sudo install -m 0755 -d /etc/apt/keyrings
+  sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+  local codename
+  codename="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")"
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${codename} stable" \
+    | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+  sudo apt-get update -y || warn "apt-get update reported errors from unrelated repositories; continuing."
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  ok "Docker Engine installed."
+}
+
+start_docker_daemon() {
+  pgrep -x dockerd >/dev/null 2>&1 && return 0
+
+  info "Starting the Docker daemon..."
+  if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl enable --now docker >/dev/null 2>&1 || sudo systemctl start docker
+  elif command -v service >/dev/null 2>&1; then
+    sudo service docker start
+  else
+    warn "Could not find systemctl or service to start Docker automatically."
+    return 1
+  fi
+
+  local tries=15
+  while [[ "${tries}" -gt 0 ]]; do
+    (docker info >/dev/null 2>&1 || sudo docker info >/dev/null 2>&1) && return 0
+    sleep 1
+    tries=$((tries - 1))
+  done
+  return 1
+}
+
+ensure_docker() {
+  if ! docker_is_native; then
+    install_docker_engine
+    hash -r
+  fi
+
+  if [[ ! -d /run/systemd/system ]]; then
+    warn "systemd doesn't look active in this WSL distro. Add 'systemd=true' under [boot] in /etc/wsl.conf and run 'wsl --shutdown' from Windows, then reopen your terminal."
+  fi
+
+  start_docker_daemon || err "Docker daemon did not start. Check with: sudo systemctl status docker"
+
+  docker info >/dev/null 2>&1 && return 0
+
+  # Daemon is up but this shell's session doesn't have the docker group applied yet.
+  if ! id -nG "${USER}" | grep -qw docker; then
+    info "Adding ${USER} to the docker group..."
+    sudo usermod -aG docker "${USER}"
+  fi
+
+  if [[ -z "${DOCAL_SG_RETRIED:-}" ]] && command -v sg >/dev/null 2>&1; then
+    warn "Applying the docker group to this session..."
+    export DOCAL_SG_RETRIED=1
+    exec sg docker -c "$(printf '%q ' "${DOCAL_BIN}" "${COMMAND}" "$@")"
+  fi
+
+  err "Docker still isn't responding. Open a new terminal (to pick up the docker group) and try again."
+}
+
+site_url() {
+  grep '^SITE_URL=' "${SITES_DIR}/${1}/.env" 2>/dev/null | cut -d= -f2- || echo '-'
+}
+
+site_running() {
+  local n=0
+  n="$(cd "${SITES_DIR}/${1}" && docker compose ps -q 2>/dev/null | wc -l)" || true
+  [[ "${n}" -gt 0 ]]
+}
+
+load_site_db_env() {
+  local site="$1"
+  local env_file="${SITES_DIR}/${site}/.env"
+  [[ -f "${env_file}" ]] || err ".env not found for '${site}'"
+  DB_NAME="$(grep '^DB_NAME=' "${env_file}" | cut -d= -f2- | tr -d '\r')"
+  DB_USER="$(grep '^DB_USER=' "${env_file}" | cut -d= -f2- | tr -d '\r')"
+  DB_PASSWORD="$(grep '^DB_PASSWORD=' "${env_file}" | cut -d= -f2- | tr -d '\r')"
+  [[ -n "${DB_NAME}" && -n "${DB_PASSWORD}" ]] || err "Incomplete DB credentials in .env"
+}
+
+ensure_db_running() {
+  local site="$1"
+  cd "${SITES_DIR}/${site}"
+  if docker compose ps --status running --services 2>/dev/null | grep -qx 'db'; then
+    return 0
+  fi
+  info "Starting database container..."
+  docker compose up -d db
+  local tries=30
+  while [[ "${tries}" -gt 0 ]]; do
+    if docker compose exec -T db mysqladmin ping -h localhost -u root -p"${DB_PASSWORD}" --silent 2>/dev/null; then
+      return 0
+    fi
+    sleep 2
+    tries=$((tries - 1))
+  done
+  err "Database did not respond in time."
+}
+
+# ── create ───────────────────────────────────────────────────────────────────
+cmd_create() {
+  local site_name=""
+  for arg in "$@"; do
+    case "${arg}" in
+      --title=*)  export SITE_TITLE="${arg#--title=}" ;;
+      --domain=*) export SITE_DOMAIN="${arg#--domain=}" ;;
+      --email=*)  export ADMIN_EMAIL="${arg#--email=}" ;;
+      --php=*)    export PHP_VERSION="${arg#--php=}" ;;
+      --mysql=*)  export MYSQL_VERSION="${arg#--mysql=}" ;;
+      --upload=*) export MAX_UPLOAD_SIZE="${arg#--upload=}" ;;
+      --repo=*)   export WP_REPO_URL="${arg#--repo=}" ;;
+      --aiowp)    export INSTALL_AIOWP_MIGRATION=1 ;;
+      --*)        err "Unknown option: ${arg}. Run: docal help" ;;
+      *)          site_name="${arg}" ;;
+    esac
+  done
+
+  if [[ -n "${site_name}" ]]; then
+    export SITE_NAME="${site_name}"
+    # Default title to site name if not given
+    export SITE_TITLE="${SITE_TITLE:-${site_name}}"
+    bash "${SCRIPTS_DIR}/setup-wordpress.sh" --non-interactive
+  else
+    bash "${SCRIPTS_DIR}/setup-wordpress.sh"
+  fi
+}
+
+# ── start ─────────────────────────────────────────────────────────────────────
+cmd_start() {
+  require_site "${1:-}"
+  local site="$1"
+  info "Starting '${site}'..."
+  bash "${SCRIPTS_DIR}/start-proxy.sh" >/dev/null 2>&1 || true
+  cd "${SITES_DIR}/${site}"
+  docker compose up -d
+  ok "$(site_url "${site}")"
+}
+
+# ── stop ──────────────────────────────────────────────────────────────────────
+cmd_stop() {
+  require_site "${1:-}"
+  local site="$1"
+  info "Stopping '${site}'..."
+  cd "${SITES_DIR}/${site}"
+  docker compose stop
+  ok "Containers stopped."
+}
+
+# ── restart ───────────────────────────────────────────────────────────────────
+cmd_restart() {
+  require_site "${1:-}"
+  local site="$1"
+  info "Restarting '${site}'..."
+  cd "${SITES_DIR}/${site}"
+  docker compose restart
+  ok "Done."
+}
+
+# ── rebuild ───────────────────────────────────────────────────────────────────
+cmd_rebuild() {
+  require_site "${1:-}"
+  local site="$1"
+  local site_dir="${SITES_DIR}/${site}"
+
+  export HOST_UID="${HOST_UID:-$(id -u)}"
+  export HOST_GID="${HOST_GID:-$(id -g)}"
+
+  info "Rebuilding image for '${site}'..."
+  cd "${site_dir}"
+  docker compose build --no-cache
+
+  info "Restarting containers..."
+  docker compose up -d
+
+  info "Fixing wp-content permissions..."
+  bash "${SCRIPTS_DIR}/fix-wp-permissions.sh" "${site_dir}"
+
+  info "Configuring permalinks and REST API..."
+  bash "${SCRIPTS_DIR}/ensure-wp-rewrites.sh" "${site_dir}"
+  ok "Rebuild complete."
+}
+
+# ── fix-rewrites ──────────────────────────────────────────────────────────────
+cmd_fix_rewrites() {
+  require_site "${1:-}"
+  local site="$1"
+  local site_dir="${SITES_DIR}/${site}"
+
+  info "Fixing permalinks and REST API for '${site}'..."
+  bash "${SCRIPTS_DIR}/fix-wp-permissions.sh" "${site_dir}"
+  bash "${SCRIPTS_DIR}/ensure-wp-rewrites.sh" "${site_dir}"
+  ok "Permalinks and REST API ready."
+}
+
+# ── delete ────────────────────────────────────────────────────────────────────
+cmd_delete() {
+  require_site "${1:-}"
+  local site="$1"
+  local site_dir="${SITES_DIR}/${site}"
+
+  echo ""
+  warn "This will remove containers, volumes and files for '${site}'."
+  warn "This action is IRREVERSIBLE."
+  echo ""
+  read -r -p "  Type the site name to confirm (${site}): " confirm
+  [[ "${confirm}" != "${site}" ]] && { info "Cancelled."; exit 0; }
+
+  echo ""
+  info "Removing containers and volumes..."
+  cd "${site_dir}"
+  docker compose down -v || true
+
+  info "Removing TLS certificates..."
+  local domain
+  domain="$(grep '^SITE_DOMAIN=' "${site_dir}/.env" 2>/dev/null | cut -d= -f2- || echo '')"
+  if [[ -n "${domain}" ]]; then
+    rm -f "${DOCAL_DIR}/proxy/certs/${site}.${domain}.crt" \
+          "${DOCAL_DIR}/proxy/certs/${site}.${domain}.key" \
+          "${DOCAL_DIR}/proxy/certs/${site}.${domain}.yml" 2>/dev/null || true
+  fi
+
+  info "Removing site files..."
+  cd "${DOCAL_DIR}"
+  if ! rm -rf "${site_dir}" 2>/dev/null; then
+    info "Cleaning container-owned files via Docker..."
+    docker run --rm -v "${site_dir}:/target" alpine \
+      sh -c 'find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} +' 2>/dev/null || true
+    rm -rf "${site_dir}"
+  fi
+  ok "Site '${site}' deleted."
+}
+
+# ── list ──────────────────────────────────────────────────────────────────────
+cmd_list() {
+  local sites=()
+  if [[ -d "${SITES_DIR}" ]]; then
+    while IFS= read -r -d '' d; do
+      [[ -f "${d}/docker-compose.yml" ]] && sites+=("$(basename "${d}")")
+    done < <(find "${SITES_DIR}" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null | sort -z) || true
+  fi
+
+  if [[ ${#sites[@]} -eq 0 ]]; then
+    info "No sites found. Create one with: docal create"
+    return 0
+  fi
+
+  echo ""
+  printf "  ${BOLD}%-24s %-10s %s${NC}\n" "SITE" "STATUS" "URL"
+  printf "  %-24s %-10s %s\n" "────────────────────────" "──────────" "────────────────────────────────────"
+  for site in "${sites[@]}"; do
+    local status color url
+    url="$(site_url "${site}")"
+    if site_running "${site}" 2>/dev/null; then
+      status="running"; color="${GREEN}"
+    else
+      status="stopped"; color="${RED}"
+    fi
+    printf "  %-24s ${color}%-10s${NC} %s\n" "${site}" "${status}" "${url}"
+  done
+  echo ""
+}
+
+# ── info ──────────────────────────────────────────────────────────────────────
+cmd_info() {
+  require_site "${1:-}"
+  local site="$1"
+  local env_file="${SITES_DIR}/${site}/.env"
+
+  echo ""
+  echo -e "  ${BOLD}${CYAN}${site}${NC}"
+  echo ""
+  if [[ -f "${env_file}" ]]; then
+    while IFS='=' read -r key val; do
+      [[ "${key}" =~ ^# || -z "${key}" ]] && continue
+      printf "  ${BOLD}%-22s${NC} %s\n" "${key}" "${val}"
+    done < "${env_file}"
+  fi
+  printf "  ${BOLD}%-22s${NC} admin / admin\n" "WP_ADMIN"
+  echo ""
+  info "Containers:"
+  cd "${SITES_DIR}/${site}"
+  docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || true
+  echo ""
+}
+
+# ── logs ──────────────────────────────────────────────────────────────────────
+cmd_logs() {
+  require_site "${1:-}"
+  local site="$1"; shift || true
+  cd "${SITES_DIR}/${site}"
+  docker compose logs --follow --tail=100 "$@"
+}
+
+# ── exec ──────────────────────────────────────────────────────────────────────
+cmd_exec() {
+  require_site "${1:-}"
+  local site="$1"; shift || true
+  cd "${SITES_DIR}/${site}"
+  docker compose exec wordpress "${@:-bash}"
+}
+
+# ── wp ────────────────────────────────────────────────────────────────────────
+cmd_wp() {
+  require_site "${1:-}"
+  local site="$1"; shift || true
+  cd "${SITES_DIR}/${site}"
+  docker compose exec -T wordpress wp --allow-root "$@"
+}
+
+# ── replace-url ───────────────────────────────────────────────────────────────
+cmd_replace_url() {
+  require_site "${1:-}"
+  local site="$1"
+  local old_url="${2:-}"
+  local new_url="${3:-}"
+
+  [[ -z "${old_url}" ]] && err "Usage: docal replace-url <site> <old-url> <new-url>"
+  [[ -z "${new_url}" ]] && err "Usage: docal replace-url <site> <old-url> <new-url>"
+
+  info "Replacing URLs in '${site}'..."
+  info "  ${old_url}  →  ${new_url}"
+  cd "${SITES_DIR}/${site}"
+  docker compose exec -T wordpress wp search-replace "${old_url}" "${new_url}" --all-tables --allow-root
+  docker compose exec -T wordpress wp option update siteurl "${new_url}" --allow-root
+  docker compose exec -T wordpress wp option update home    "${new_url}" --allow-root
+  docker compose exec -T wordpress wp cache flush --allow-root
+  ok "URLs updated. Restarting WordPress..."
+  docker compose restart wordpress
+}
+
+# ── export-db ─────────────────────────────────────────────────────────────────
+cmd_export_db() {
+  require_site "${1:-}"
+  local site="$1"
+  local output_name="${2:-}"
+  local site_dir="${SITES_DIR}/${site}"
+
+  load_site_db_env "${site}"
+  ensure_db_running "${site}"
+  cd "${site_dir}"
+
+  if [[ -z "${output_name}" ]]; then
+    output_name="${site}-$(date +%Y%m%d-%H%M%S).sql.gz"
+  else
+    output_name="$(basename "${output_name}")"
+    [[ "${output_name}" == *.sql.gz ]] || output_name="${output_name}.sql.gz"
+  fi
+
+  info "Exporting '${DB_NAME}' to ${site_dir}/${output_name}..."
+  docker compose exec -T db mysqldump \
+    -u root -p"${DB_PASSWORD}" \
+    --single-transaction --quick --lock-tables=false \
+    "${DB_NAME}" | gzip > "${site_dir}/${output_name}"
+  ok "Exported: ${site_dir}/${output_name}"
+}
+
+# ── import-db ─────────────────────────────────────────────────────────────────
+cmd_import_db() {
+  require_site "${1:-}"
+  local site="$1"
+  local dump_name="${2:-}"
+  local site_dir="${SITES_DIR}/${site}"
+  local -a dumps=()
+  local selected=""
+
+  load_site_db_env "${site}"
+  ensure_db_running "${site}"
+  cd "${site_dir}"
+
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] && dumps+=("${f}")
+  done < <(find "${site_dir}" -maxdepth 1 -type f -name '*.sql.gz' | sort)
+
+  if [[ ${#dumps[@]} -eq 0 ]]; then
+    err "No .sql.gz files found in ${site_dir}"
+  fi
+
+  if [[ -n "${dump_name}" ]]; then
+    dump_name="$(basename "${dump_name}")"
+    if [[ -f "${site_dir}/${dump_name}" ]]; then
+      selected="${site_dir}/${dump_name}"
+    else
+      err "File not found: ${site_dir}/${dump_name}"
+    fi
+  else
+    echo ""
+    echo -e "  ${BOLD}Database dumps in ${site_dir}:${NC}"
+    echo ""
+    local i=1 f size mtime
+    for f in "${dumps[@]}"; do
+      size="$(du -h "${f}" | cut -f1)"
+      mtime="$(date -r "${f}" '+%Y-%m-%d %H:%M')"
+      printf "  ${BOLD}%2d)${NC} %-40s %6s  %s\n" "${i}" "$(basename "${f}")" "${size}" "${mtime}"
+      i=$((i + 1))
+    done
+    echo ""
+    read -r -p "  Select a file [1-${#dumps[@]}] (q=cancel): " choice
+    [[ "${choice}" == "q" || "${choice}" == "Q" ]] && { info "Cancelled."; exit 0; }
+    [[ "${choice}" =~ ^[0-9]+$ ]] || err "Invalid selection."
+    (( choice >= 1 && choice <= ${#dumps[@]} )) || err "Selection out of range."
+    selected="${dumps[$((choice - 1))]}"
+  fi
+
+  echo ""
+  warn "This will replace all data in '${DB_NAME}' with:"
+  warn "  $(basename "${selected}")"
+  read -r -p "  Continue? [y/N]: " confirm
+  [[ "${confirm}" =~ ^[yY]$ ]] || { info "Cancelled."; exit 0; }
+
+  info "Importing $(basename "${selected}")..."
+  gunzip -c "${selected}" | docker compose exec -T db mysql \
+    -u root -p"${DB_PASSWORD}" "${DB_NAME}"
+
+  if docker compose ps --status running --services 2>/dev/null | grep -qx 'wordpress'; then
+    docker compose exec -T wordpress wp cache flush --allow-root >/dev/null 2>&1 || true
+  fi
+  ok "Import complete."
+}
+
+# ── import-wpress ─────────────────────────────────────────────────────────────
+cmd_import_wpress() {
+  require_site "${1:-}"
+  local site="$1"
+  local file_name="${2:-}"
+  local site_dir="${SITES_DIR}/${site}"
+  local wpress_dir="${DOCAL_DIR}/wpress"
+  local -a backups=()
+  local selected=""
+
+  [[ -f "${site_dir}/.env" ]] || err ".env not found for '${site}'"
+  SITE_SLUG="$(grep '^SITE_SLUG=' "${site_dir}/.env" | cut -d= -f2- | tr -d '\r')"
+  SITE_DOMAIN="$(grep '^SITE_DOMAIN=' "${site_dir}/.env" | cut -d= -f2- | tr -d '\r')"
+  ADMIN_EMAIL="$(grep '^ADMIN_EMAIL=' "${site_dir}/.env" | cut -d= -f2- | tr -d '\r')"
+  INSTALL_AIOWP_MIGRATION=0
+  SITE_DIR="${site_dir}"
+
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] && backups+=("${f}")
+  done < <(find "${wpress_dir}" -maxdepth 1 -type f -name '*.wpress' 2>/dev/null | sort)
+
+  if [[ ${#backups[@]} -eq 0 ]]; then
+    err "No .wpress files found in ${wpress_dir}"
+  fi
+
+  if [[ -n "${file_name}" ]]; then
+    file_name="$(basename "${file_name}")"
+    if [[ -f "${wpress_dir}/${file_name}" ]]; then
+      selected="${wpress_dir}/${file_name}"
+    else
+      err "File not found: ${wpress_dir}/${file_name}"
+    fi
+  else
+    echo ""
+    echo -e "  ${BOLD}Backups in ${wpress_dir}:${NC}"
+    echo ""
+    local i=1 f size mtime
+    for f in "${backups[@]}"; do
+      size="$(du -h "${f}" | cut -f1)"
+      mtime="$(date -r "${f}" '+%Y-%m-%d %H:%M')"
+      printf "  ${BOLD}%2d)${NC} %-40s %6s  %s\n" "${i}" "$(basename "${f}")" "${size}" "${mtime}"
+      i=$((i + 1))
+    done
+    echo ""
+    read -r -p "  Select a file [1-${#backups[@]}] (q=cancel): " choice
+    [[ "${choice}" == "q" || "${choice}" == "Q" ]] && { info "Cancelled."; exit 0; }
+    [[ "${choice}" =~ ^[0-9]+$ ]] || err "Invalid selection."
+    (( choice >= 1 && choice <= ${#backups[@]} )) || err "Selection out of range."
+    selected="${backups[$((choice - 1))]}"
+  fi
+
+  echo ""
+  warn "This will replace all content in '${site}' (DB + uploads + plugins/themes) with:"
+  warn "  $(basename "${selected}")"
+  read -r -p "  Continue? [y/N]: " confirm
+  [[ "${confirm}" =~ ^[yY]$ ]] || { info "Cancelled."; exit 0; }
+
+  cd "${site_dir}"
+  # shellcheck source=lib-import-wpress.sh
+  source "${SCRIPTS_DIR}/lib-import-wpress.sh"
+  import_wpress_backup "${selected}"
+  ok "wpress backup imported into '${site}'."
+}
+
+# ── lint ──────────────────────────────────────────────────────────────────────
+cmd_lint() {
+  require_site "${1:-}"
+  bash "${SCRIPTS_DIR}/lint-php.sh" "$@"
+}
+
+# ── clean-certs ───────────────────────────────────────────────────────────────
+cmd_clean_certs() {
+  local cert_dir="${DOCAL_DIR}/proxy/certs"
+  if [[ ! -d "${cert_dir}" ]]; then
+    info "No certificates directory found."
+    return 0
+  fi
+
+  # Build set of expected cert stems from existing sites
+  declare -A expected_stems
+  while IFS= read -r -d '' site_dir; do
+    local slug domain
+    slug="$(grep '^SITE_SLUG=' "${site_dir}/.env" 2>/dev/null | cut -d= -f2- | tr -d '\r')" || true
+    domain="$(grep '^SITE_DOMAIN=' "${site_dir}/.env" 2>/dev/null | cut -d= -f2- | tr -d '\r')" || true
+    if [[ -n "${slug}" && -n "${domain}" ]]; then
+      expected_stems["${slug}.${domain}"]=1
+    fi
+  done < <(find "${SITES_DIR}" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null)
+
+  # Find orphaned cert files
+  local orphaned=()
+  while IFS= read -r -d '' crt_file; do
+    local stem
+    stem="$(basename "${crt_file}" .crt)"
+    if [[ -z "${expected_stems["${stem}"]+_}" ]]; then
+      orphaned+=("${stem}")
+    fi
+  done < <(find "${cert_dir}" -maxdepth 1 -name "*.crt" -print0 2>/dev/null)
+
+  if [[ ${#orphaned[@]} -eq 0 ]]; then
+    ok "No orphaned certificates found."
+    return 0
+  fi
+
+  echo ""
+  warn "Orphaned certificates (no matching site):"
+  for stem in "${orphaned[@]}"; do
+    echo "    ${stem}.*"
+  done
+  echo ""
+  read -r -p "  Delete these certificates? [y/N]: " confirm
+  [[ "${confirm}" =~ ^[yY]$ ]] || { info "Cancelled."; exit 0; }
+
+  for stem in "${orphaned[@]}"; do
+    rm -f "${cert_dir}/${stem}.crt" \
+          "${cert_dir}/${stem}.key" \
+          "${cert_dir}/${stem}.yml"
+    ok "Deleted: ${stem}.*"
+  done
+}
+
+# ── proxy ─────────────────────────────────────────────────────────────────────
+cmd_proxy() {
+  local sub="${1:-start}"; shift || true
+  case "${sub}" in
+    start)   bash "${SCRIPTS_DIR}/start-proxy.sh" ;;
+    stop)    cd "${DOCAL_DIR}/proxy" && docker compose stop ;;
+    restart) cd "${DOCAL_DIR}/proxy" && docker compose restart ;;
+    status)  cd "${DOCAL_DIR}/proxy" && docker compose ps ;;
+    *)       err "Usage: docal proxy [start|stop|restart|status]" ;;
+  esac
+}
+
+# ── install ───────────────────────────────────────────────────────────────────
+# ── tunnel ────────────────────────────────────────────────────────────────────
+# Optional: expose a local site to the internet via a Cloudflare Tunnel.
+# Requires your own Cloudflare account and domain — this is NOT needed for
+# local development, only if you want to share a running site externally
+# (e.g. for client review or webhook testing).
+# Uses cloudflared named tunnels so the public URL is stable across restarts.
+# Each site gets its own tunnel: <site>.<DOCAL_TUNNEL_DOMAIN> → WP container port 80.
+#
+# Prerequisites (one-time setup):
+#   Set DOCAL_TUNNEL_DOMAIN to a domain you control in Cloudflare DNS.
+#   sudo apt-get install cloudflared   OR   see https://pkg.cloudflare.com/cloudflared
+#   cloudflared login                  (opens browser, saves ~/.cloudflared/cert.pem)
+#
+# Usage:
+#   docal tunnel start  <site>   Start tunnel for site (creates if needed)
+#   docal tunnel stop   <site>   Stop running tunnel
+#   docal tunnel status <site>   Show tunnel state
+#   docal tunnel delete <site>   Delete tunnel and DNS record
+#   docal tunnel url    <site>   Print the public URL
+
+TUNNEL_DOMAIN="${DOCAL_TUNNEL_DOMAIN:-}"
+
+cmd_tunnel() {
+  local sub="${1:-help}"; shift 2>/dev/null || true
+
+  if [[ "${sub}" != "help" && -z "${TUNNEL_DOMAIN}" ]]; then
+    err "DOCAL_TUNNEL_DOMAIN is not set. Export it to a domain you control in Cloudflare DNS, e.g.:\n  export DOCAL_TUNNEL_DOMAIN=example.com"
+  fi
+
+  case "${sub}" in
+    start)   _tunnel_start  "$@" ;;
+    stop)    _tunnel_stop   "$@" ;;
+    status)  _tunnel_status "$@" ;;
+    delete)  _tunnel_delete "$@" ;;
+    url)     _tunnel_url    "$@" ;;
+    *)
+      echo "Usage: docal tunnel <start|stop|status|delete|url> <site>"
+      echo "       Requires DOCAL_TUNNEL_DOMAIN env var (a domain you control in Cloudflare DNS)."
+      ;;
+  esac
+}
+
+_tunnel_require_cloudflared() {
+  command -v cloudflared &>/dev/null || \
+    err "cloudflared is not installed.\nInstall it with:\n  curl -L https://pkg.cloudflare.com/cloudflared/deb/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloudflare-main.gpg\n  echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared/deb stable main' | sudo tee /etc/apt/sources.list.d/cloudflared.list\n  sudo apt-get update && sudo apt-get install cloudflared"
+}
+
+_tunnel_name() { echo "docal-${1}"; }
+
+_tunnel_dir() { echo "${SITES_DIR}/${1}/tunnel"; }
+
+_tunnel_pid_file() { echo "${SITES_DIR}/${1}/tunnel/cloudflared.pid"; }
+
+_tunnel_log_file() { echo "${SITES_DIR}/${1}/tunnel/cloudflared.log"; }
+
+_tunnel_start() {
+  local site="${1:-}"
+  require_site "${site}"
+  _tunnel_require_cloudflared
+
+  local tunnel_name; tunnel_name="$(_tunnel_name "${site}")"
+  local tunnel_dir;  tunnel_dir="$(_tunnel_dir "${site}")"
+  local pid_file;    pid_file="$(_tunnel_pid_file "${site}")"
+  local log_file;    log_file="$(_tunnel_log_file "${site}")"
+  local public_url="${site}.${TUNNEL_DOMAIN}"
+  local credentials_file="${tunnel_dir}/credentials.json"
+  local config_file="${tunnel_dir}/config.yml"
+
+  mkdir -p "${tunnel_dir}"
+
+  # Stop any existing tunnel for this site
+  if [[ -f "${pid_file}" ]]; then
+    local old_pid; old_pid="$(cat "${pid_file}")"
+    if kill -0 "${old_pid}" 2>/dev/null; then
+      info "Stopping existing tunnel (PID ${old_pid})..."
+      kill "${old_pid}" 2>/dev/null || true
+      sleep 1
+    fi
+    rm -f "${pid_file}"
+  fi
+
+  # Create the named tunnel if credentials aren't saved locally yet.
+  # cloudflared stores credentials in ~/.cloudflared/<uuid>.json automatically;
+  # we copy them to the site's tunnel dir so everything is self-contained.
+  if [[ ! -f "${credentials_file}" ]]; then
+    info "Creating Cloudflare Tunnel '${tunnel_name}'..."
+
+    # Capture output to find the credentials file path cloudflared printed.
+    local create_out
+    create_out="$(cloudflared tunnel create "${tunnel_name}" 2>&1)" \
+      || err "Failed to create tunnel. Make sure 'cloudflared login' was completed (cert.pem must exist at ~/.cloudflared/cert.pem).\n${create_out}"
+
+    echo "${create_out}"
+
+    # cloudflared writes the credentials to ~/.cloudflared/<uuid>.json.
+    # Find the most recently written JSON file there and copy it.
+    local cf_default_dir="${HOME}/.cloudflared"
+    local auto_creds
+    auto_creds="$(ls -t "${cf_default_dir}"/*.json 2>/dev/null | head -1)"
+
+    if [[ -z "${auto_creds}" ]]; then
+      err "Could not find credentials file in ${cf_default_dir}. Check cloudflared output above."
+    fi
+
+    cp "${auto_creds}" "${credentials_file}"
+    info "Credentials saved to ${credentials_file}"
+
+    info "Creating DNS record ${public_url} → tunnel..."
+    cloudflared tunnel route dns "${tunnel_name}" "${public_url}" \
+      || warn "DNS record creation failed. You may need to add it manually in the Cloudflare dashboard."
+  else
+    info "Using existing tunnel '${tunnel_name}'."
+  fi
+
+  # Generate config.yml pointing to the WP container's internal port 80.
+  # We target the container directly (by name on the docal-proxy network) to
+  # avoid Traefik's HTTPS redirect loop for the external domain.
+  cat > "${config_file}" <<EOF
+tunnel: ${tunnel_name}
+credentials-file: ${credentials_file}
+
+ingress:
+  - hostname: ${public_url}
+    service: https://127.0.0.1:443
+    originRequest:
+      httpHostHeader: ${site}.localhost
+      originServerName: ${site}.localhost
+      noTLSVerify: true
+  - service: http_status:404
+EOF
+
+  # Start cloudflared in the background
+  nohup cloudflared tunnel --config "${config_file}" run \
+    > "${log_file}" 2>&1 &
+  local new_pid=$!
+  echo "${new_pid}" > "${pid_file}"
+
+  sleep 2
+  if kill -0 "${new_pid}" 2>/dev/null; then
+    ok "Tunnel started (PID ${new_pid})"
+    ok "Public URL: https://${public_url}"
+    info "Logs: ${log_file}"
+  else
+    err "cloudflared exited immediately. Check logs: ${log_file}"
+  fi
+}
+
+_tunnel_stop() {
+  local site="${1:-}"
+  require_site "${site}"
+
+  local pid_file; pid_file="$(_tunnel_pid_file "${site}")"
+
+  if [[ ! -f "${pid_file}" ]]; then
+    warn "No tunnel PID file found for '${site}'. Is the tunnel running?"
+    return 0
+  fi
+
+  local pid; pid="$(cat "${pid_file}")"
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill "${pid}"
+    ok "Tunnel for '${site}' stopped (PID ${pid})"
+  else
+    warn "Process ${pid} not found — tunnel was already stopped."
+  fi
+  rm -f "${pid_file}"
+}
+
+_tunnel_status() {
+  local site="${1:-}"
+  require_site "${site}"
+
+  local pid_file; pid_file="$(_tunnel_pid_file "${site}")"
+  local public_url="${site}.${TUNNEL_DOMAIN}"
+
+  if [[ -f "${pid_file}" ]]; then
+    local pid; pid="$(cat "${pid_file}")"
+    if kill -0 "${pid}" 2>/dev/null; then
+      ok "Tunnel for '${site}' is RUNNING (PID ${pid})"
+      echo -e "  Public URL: ${CYAN}https://${public_url}${NC}"
+    else
+      warn "PID file exists but process ${pid} is not running. Tunnel is DOWN."
+    fi
+  else
+    info "Tunnel for '${site}' is STOPPED."
+    info "Start it with: docal tunnel start ${site}"
+  fi
+}
+
+_tunnel_delete() {
+  local site="${1:-}"
+  require_site "${site}"
+  _tunnel_require_cloudflared
+
+  local tunnel_name; tunnel_name="$(_tunnel_name "${site}")"
+  local tunnel_dir;  tunnel_dir="$(_tunnel_dir "${site}")"
+
+  _tunnel_stop "${site}" 2>/dev/null || true
+
+  info "Deleting Cloudflare Tunnel '${tunnel_name}'..."
+  cloudflared tunnel delete "${tunnel_name}" 2>/dev/null \
+    && ok "Tunnel deleted." \
+    || warn "Could not delete tunnel from Cloudflare. Remove it manually in the dashboard."
+
+  rm -rf "${tunnel_dir}"
+  ok "Tunnel config removed for '${site}'."
+  info "Remember to remove the DNS record ${site}.${TUNNEL_DOMAIN} in the Cloudflare dashboard."
+}
+
+_tunnel_url() {
+  local site="${1:-}"
+  require_site "${site}"
+  echo "https://${site}.${TUNNEL_DOMAIN}"
+}
+
+# ── install ───────────────────────────────────────────────────────────────────
+cmd_install() {
+  local target="/usr/local/bin/docal"
+  if ln -sf "${DOCAL_BIN}" "${target}" 2>/dev/null; then
+    ok "docal installed at ${target}"
+    ok "Run 'docal help' to see all commands."
+  else
+    warn "No write permission. Run:"
+    echo ""
+    echo "  sudo ln -sf ${DOCAL_BIN} ${target}"
+    echo ""
+  fi
+}
+
+# ── help ──────────────────────────────────────────────────────────────────────
+cmd_help() {
+  echo ""
+  echo -e "  ${BOLD}${CYAN}docal${NC}  —  Local WordPress site manager with Docker"
+  echo ""
+  echo -e "  ${BOLD}Commands:${NC}"
+  echo "    create [<site>] [options]        Create a new WordPress site"
+  echo "    start   <site>                   Start containers"
+  echo "    stop    <site>                   Stop containers"
+  echo "    restart <site>                   Restart containers"
+  echo "    rebuild <site>                   Rebuild image and fix permissions"
+  echo "    fix-rewrites <site>              Fix permalinks/REST API without rebuild"
+  echo "    delete  <site>                   Delete site and all its data"
+  echo "    export-db <site> [file]          Export database to .sql.gz"
+  echo "    import-db <site> [file]          Import database from .sql.gz"
+  echo "    import-wpress <site> [file]      Restore an All-in-One (.wpress) backup into an existing site"
+  echo "    list                             List all sites with status"
+  echo "    info    <site>                   Show URL, credentials and status"
+  echo "    logs    <site> [service]         Tail logs in real time"
+  echo "    exec    <site> [command]         Shell into the WordPress container"
+  echo "    wp      <site> <command>         Run a WP-CLI command"
+  echo "    lint    <site> [path ...]        Lint PHP files with the site's own PHP version"
+  echo "    replace-url <site> <old> <new>   Replace URLs across the database"
+  echo "    clean-certs                      Delete certificates for removed sites"
+  echo "    proxy   [start|stop|status]      Manage the Traefik proxy"
+  echo "    tunnel  <start|stop|status|delete|url> <site>"
+  echo "                                     Cloudflare Tunnel — expose a site publicly (optional, needs your own domain)"
+  echo "    install                          Install docal to /usr/local/bin"
+  echo ""
+  echo -e "  ${BOLD}Options for create:${NC}"
+  echo "    --title=<title>                  Site title        (default: site name)"
+  echo "    --domain=<domain>                Local domain      (default: localhost)"
+  echo "    --email=<email>                  Admin email       (default: admin@docal.com)"
+  echo "    --php=<version>                  PHP version       (default: latest)"
+  echo "    --mysql=<version>                MySQL version     (default: 8.4)"
+  echo "    --upload=<size>                  Max upload size   (default: 2G)"
+  echo "    --repo=<url>                     Git repo to clone (default: official WordPress)"
+  echo "    --aiowp                          Install All-in-One WP Migration"
+  echo ""
+  echo -e "  ${BOLD}Examples:${NC}"
+  echo "    docal create                              # interactive wizard"
+  echo "    docal create myshop --title='My Store'"
+  echo "    docal create blog --php=8.2 --mysql=8.0"
+  echo "    docal create myshop --aiowp"
+  echo "    docal list"
+  echo "    docal info myshop"
+  echo "    docal wp myshop plugin list --status=active"
+  echo "    docal wp myshop user list"
+  echo "    docal exec myshop bash"
+  echo "    docal logs myshop"
+  echo "    docal logs myshop wordpress"
+  echo "    docal stop myshop"
+  echo "    docal export-db myshop"
+  echo "    docal import-db myshop"
+  echo "    docal import-wpress myshop                # picks from wpress/*.wpress"
+  echo "    docal import-wpress myshop backup.wpress"
+  echo "    docal lint myshop"
+  echo "    docal delete myshop"
+  echo ""
+}
+
+# ── dispatch ──────────────────────────────────────────────────────────────────
+COMMAND="${1:-help}"
+shift 2>/dev/null || true
+
+case "${COMMAND}" in
+  help|--help|-h|install|clean-certs|cc) : ;;
+  *) ensure_docker "$@" ;;
+esac
+
+case "${COMMAND}" in
+  create|new)         cmd_create "$@" ;;
+  start)              cmd_start "$@" ;;
+  stop)               cmd_stop "$@" ;;
+  restart)            cmd_restart "$@" ;;
+  rebuild)            cmd_rebuild "$@" ;;
+  fix-rewrites|rewrites) cmd_fix_rewrites "$@" ;;
+  delete|remove|rm)   cmd_delete "$@" ;;
+  list|ls)            cmd_list ;;
+  info|describe)      cmd_info "$@" ;;
+  logs)               cmd_logs "$@" ;;
+  exec|shell)         cmd_exec "$@" ;;
+  wp|cli)             cmd_wp "$@" ;;
+  replace-url|ru)     cmd_replace_url "$@" ;;
+  export-db|edb)      cmd_export_db "$@" ;;
+  import-db|idb)      cmd_import_db "$@" ;;
+  import-wpress|iw)   cmd_import_wpress "$@" ;;
+  lint)               cmd_lint "$@" ;;
+  clean-certs|cc)     cmd_clean_certs ;;
+  proxy)              cmd_proxy "$@" ;;
+  tunnel)             cmd_tunnel "$@" ;;
+  install)            cmd_install ;;
+  help|--help|-h)     cmd_help ;;
+  *)
+    echo -e "${RED}Unknown command: ${COMMAND}${NC}"
+    cmd_help
+    exit 1
+    ;;
+esac
