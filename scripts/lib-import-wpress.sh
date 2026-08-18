@@ -33,14 +33,19 @@ finalize_imported_site() {
   old_domain="${old_siteurl#https://}"
   old_domain="${old_domain#http://}"
   if [[ -n "${old_domain}" ]]; then
-    docker compose exec -T wordpress bash -c "find /var/www/html/wp-content/uploads -type f -name '*.css' -exec sed -i 's|https://${old_domain}|${new_siteurl}|g; s|http://${old_domain}|${new_siteurl}|g' {} +" 2>/dev/null || true
+    # old_domain/new_siteurl come from the imported backup's own DB content, so
+    # they're untrusted — pass them in as env vars instead of splicing them into
+    # the inner bash -c string, or a crafted siteurl could break out of the sed
+    # expression and run arbitrary commands in the container.
+    docker compose exec -T -e OLD_DOMAIN="${old_domain}" -e NEW_SITEURL="${new_siteurl}" wordpress \
+      bash -c 'find /var/www/html/wp-content/uploads -type f -name "*.css" -exec sed -i "s|https://${OLD_DOMAIN}|${NEW_SITEURL}|g; s|http://${OLD_DOMAIN}|${NEW_SITEURL}|g" {} +' 2>/dev/null || true
   fi
 
   docker compose exec -T wordpress mkdir -p /var/www/html/wp-content/uploads/elementor/css 2>/dev/null || true
   docker compose exec -T wordpress chown -R www-data:www-data /var/www/html/wp-content/uploads/elementor 2>/dev/null || true
   docker compose exec -T wordpress wp elementor flush_css --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
 
-  "${SCRIPTS_DIR}/ensure-wp-rewrites.sh" "${SITE_DIR}" || echo "[warn] ensure-wp-rewrites.sh falló tras import — revisa .htaccess manualmente." >&2
+  "${SCRIPTS_DIR}/ensure-wp-rewrites.sh" "${SITE_DIR}" || echo "[warn] ensure-wp-rewrites.sh failed after import — check .htaccess manually." >&2
 
   docker compose exec -T wordpress wp user update admin --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
     docker compose exec -T wordpress wp user create admin "${ADMIN_EMAIL}" --role=administrator --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || true

@@ -14,16 +14,19 @@ services:
       db:
         condition: service_healthy
     environment:
+      # These WORDPRESS_* vars are what the official image's entrypoint uses to
+      # generate wp-config.php — but docal generates wp-config.php itself before
+      # the container ever starts (see write_wp_config() in setup-wordpress.sh),
+      # so the entrypoint's own config step is a no-op here. They're set anyway
+      # for parity with plain `docker run wordpress` setups and in case
+      # wp-config.php is ever missing (e.g. a fresh volume). WP_HOME, WP_SITEURL
+      # and the memory-limit constants are defined directly inside wp-config.php
+      # instead, since WORDPRESS_CONFIG_EXTRA would be silently ignored too.
       WORDPRESS_DB_HOST: localhost:/var/run/mysqld/mysqld.sock
       WORDPRESS_DB_NAME: __DB_NAME__
       WORDPRESS_DB_USER: __DB_USER__
       WORDPRESS_DB_PASSWORD: __DB_PASSWORD__
       WORDPRESS_TABLE_PREFIX: wp_
-      WORDPRESS_CONFIG_EXTRA: |
-        define('WP_HOME', 'https://__SITE_SLUG__.__SITE_DOMAIN__');
-        define('WP_SITEURL', 'https://__SITE_SLUG__.__SITE_DOMAIN__');
-        define('WP_MEMORY_LIMIT', '__WP_MEMORY_LIMIT__');
-        define('WP_MAX_MEMORY_LIMIT', '__WP_MEMORY_LIMIT__');
     volumes:
       - ./wordpress:/var/www/html
       - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro

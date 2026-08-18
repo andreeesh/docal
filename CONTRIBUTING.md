@@ -121,6 +121,19 @@ Files-only import (no DB): chown uploads + rewrites; skip URL replace.
   '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`; fix by killing the stale
   `docker-proxy` PIDs (needs root) and recreating the port-publishing container.
 
+## Testing
+
+`tests/test_setup_generates_wp_config.sh` runs `setup-wordpress.sh --skip-docker` and checks
+that `wp-config.php` comes out with real DB credentials — no Docker daemon required. CI
+(`.github/workflows/ci.yml`) runs this plus `bash -n` and `shellcheck` on every script for each
+push/PR. Run the same checks locally before opening a PR:
+
+```bash
+bash -n scripts/docal scripts/*.sh tests/*.sh
+shellcheck scripts/docal scripts/*.sh tests/*.sh   # if you have it installed
+bash tests/test_setup_generates_wp_config.sh
+```
+
 ## Conventions
 
 - Prefer extending `scripts/docal` + `scripts/setup-wordpress.sh` over one-off hacks.

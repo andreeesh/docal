@@ -203,7 +203,7 @@ write_wp_config() {
     return 1
   fi
 
-  python3 - "${sample_file}" "${target_file}" "${DB_NAME}" "${DB_USER}" "${DB_PASSWORD}" "localhost:/var/run/mysqld/mysqld.sock" <<'PY'
+  python3 - "${sample_file}" "${target_file}" "${DB_NAME}" "${DB_USER}" "${DB_PASSWORD}" "localhost:/var/run/mysqld/mysqld.sock" "${SITE_SLUG}.${SITE_DOMAIN}" "${WP_MEMORY_LIMIT}" <<'PY'
 import pathlib
 import secrets
 import string
@@ -215,6 +215,8 @@ db_name = sys.argv[3]
 db_user = sys.argv[4]
 db_password = sys.argv[5]
 db_host = sys.argv[6]
+site_host = sys.argv[7]
+wp_memory_limit = sys.argv[8]
 
 alphabet = string.ascii_letters + string.digits
 
@@ -241,6 +243,12 @@ for old, new in replacements.items():
     content = content.replace(old, new, 1)
 
 extras = (
+    "\n/** Site URL (fixed here because wp-config.php already exists by the time\n"
+    " *  the container starts, so the WORDPRESS_* env vars are never applied) */\n"
+    "defined( 'WP_HOME' ) || define( 'WP_HOME', 'https://%s' );\n"
+    "defined( 'WP_SITEURL' ) || define( 'WP_SITEURL', 'https://%s' );\n"
+    "defined( 'WP_MEMORY_LIMIT' ) || define( 'WP_MEMORY_LIMIT', '%s' );\n"
+    "defined( 'WP_MAX_MEMORY_LIMIT' ) || define( 'WP_MAX_MEMORY_LIMIT', '%s' );\n"
     "\n/** Debug (local dev) */\n"
     "defined( 'WP_DEBUG' ) || define( 'WP_DEBUG', true );\n"
     "defined( 'WP_DEBUG_LOG' ) || define( 'WP_DEBUG_LOG', true );\n"
@@ -249,7 +257,7 @@ extras = (
     "if ( isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https' ) {\n"
     "\t$_SERVER['HTTPS'] = 'on';\n"
     "}\n\n"
-)
+) % (site_host, site_host, wp_memory_limit, wp_memory_limit)
 content = content.replace(
     "require_once ABSPATH . 'wp-settings.php';",
     extras + "require_once ABSPATH . 'wp-settings.php';",

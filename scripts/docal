@@ -848,7 +848,7 @@ cmd_help() {
   echo "    lint    <site> [path ...]        Lint PHP files with the site's own PHP version"
   echo "    replace-url <site> <old> <new>   Replace URLs across the database"
   echo "    clean-certs                      Delete certificates for removed sites"
-  echo "    proxy   [start|stop|status]      Manage the Traefik proxy"
+  echo "    proxy   [start|stop|restart|status]  Manage the Traefik proxy"
   echo "    tunnel  <start|stop|status|delete|url> <site>"
   echo "                                     Cloudflare Tunnel — expose a site publicly (optional, needs your own domain)"
   echo "    install                          Install docal to /usr/local/bin"

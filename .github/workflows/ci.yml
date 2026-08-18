@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shell-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax-check all shell scripts
+        run: |
+          set -e
+          for f in scripts/docal scripts/*.sh tests/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: ShellCheck
+        # severity=error for now: this couldn't be validated against shellcheck
+        # locally before the first push (no network/sudo in the dev sandbox).
+        # Once you've seen a green run and triaged any warning-level output,
+        # feel free to tighten this to --severity=warning.
+        run: |
+          shellcheck --version
+          shellcheck --severity=error --shell=bash \
+            scripts/docal scripts/*.sh tests/*.sh
+
+  wp-config-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run wp-config generation test
+        run: bash tests/test_setup_generates_wp_config.sh
