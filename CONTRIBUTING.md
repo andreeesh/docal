@@ -4,9 +4,17 @@ Notes for anyone changing the CLI, the site creation/import flow, the Docker pre
 
 ## Layout
 
+This repo is what gets cloned into `~/.docal/repo` on a real install (see
+[docs/architecture.md](docs/architecture.md)). When developing docal itself, you run it straight
+out of the clone — nothing here needs `~/.docal` to exist first; `scripts/docal` figures out
+`DOCAL_HOME`/`DOCAL_DIR`/`sites_dir` on its own the same way a real install would (see
+`lib-config.sh`).
+
 ```
 docal/
 ├── scripts/docal                 # CLI entrypoint
+├── scripts/lib-config.sh         # global config + sites_dir/proxy_dir resolution
+├── scripts/lib-doctor.sh         # `docal doctor` checks
 ├── scripts/setup-wordpress.sh    # create / import wizard
 ├── scripts/lib-import-wpress.sh  # shared .wpress restore logic
 ├── scripts/start-proxy.sh
@@ -14,22 +22,47 @@ docal/
 ├── scripts/fix-wp-permissions.sh
 ├── scripts/lint-php.sh
 ├── templates/                    # docker-compose.yml.tpl, Dockerfile.tpl
-├── proxy/                        # Traefik + certs/
+├── install.sh                    # one-line installer (clones into ~/.docal/repo)
+├── VERSION, CHANGELOG.md
+├── docs/                         # user-facing docs split out of README.md
 ├── plugins/                      # optional local plugin .zips (gitignored)
 ├── wpress/                       # optional All-in-One .wpress (gitignored)
 ├── dbs/                          # optional .sql / .sql.gz dumps (gitignored)
 ├── files/                        # optional uploads .zips (gitignored)
-└── sites/<slug>/                 # generated sites (gitignored)
+└── sites/<slug>/                 # legacy dev-clone sites dir (gitignored) — see below
 ```
+
+`sites/` here only matters for manual/dev-clone usage: if it has real site subdirectories in it
+the first time `docal` resolves `sites_dir` (no `~/.docal/config` yet), it gets adopted as
+`sites_dir` and persisted to config. A real install has no `sites/` folder here at all — sites
+live in `~/Sites` (or wherever `docal config set sites_dir` points) instead.
 
 ## CLI (`scripts/docal`)
 
 Commands: `create`, `start`, `stop`, `restart`, `rebuild`, `fix-rewrites`, `delete`, `list`,
 `info`, `logs`, `exec`, `wp`, `lint`, `replace-url`, `export-db`, `import-db`, `import-wpress`,
-`clean-certs`, `proxy`, `tunnel`, `install`, `help`.
+`clean-certs`, `proxy`, `tunnel`, `doctor`, `config`, `update`, `uninstall`, `install`, `version`,
+`help`.
 
 `create` without a site name is interactive; with a name runs `--non-interactive` (skips
 plugin/import prompts).
+
+## Global config and state (`lib-config.sh`, `lib-doctor.sh`)
+
+- `resolve_sites_dir()` implements the `DOCAL_SITES_DIR` env → `sites_dir` config → legacy
+  in-repo `sites/` → default `~/Sites` precedence, and persists whichever default it picks so it
+  only resolves once. Don't add a second code path that re-derives `sites_dir` — everything
+  (`docal`, `setup-wordpress.sh`, `start-proxy.sh`) should keep reading the `SITES_DIR`/`PROXY_DIR`
+  env vars that `docal` exports, or default sensibly when run standalone (as the existing test
+  does via `--skip-docker` with no `SITES_DIR` set).
+- `config_get`/`config_set`/`config_all` operate on a flat `KEY=value` file — no YAML/JSON parser
+  dependency. Adding a new config key means updating `DOCAL_CONFIG_KEYS` in `lib-config.sh`, wiring
+  it into `cmd_create`'s config-fallback block in `scripts/docal`, and documenting it in
+  `docs/configuration.md`.
+- `lib-doctor.sh`'s checks are individual functions (`doctor_check_*`) so they can, in principle,
+  be exercised without a real Docker daemon; `doctor_run` sequences them with `|| true` since
+  `scripts/docal` runs under `set -euo pipefail` and a single failing check must not abort the
+  rest of the report.
 
 ## Docker preflight (`ensure_docker`)
 
@@ -123,15 +156,31 @@ Files-only import (no DB): chown uploads + rewrites; skip URL replace.
 
 ## Testing
 
-`tests/test_setup_generates_wp_config.sh` runs `setup-wordpress.sh --skip-docker` and checks
-that `wp-config.php` comes out with real DB credentials — no Docker daemon required. CI
-(`.github/workflows/ci.yml`) runs this plus `bash -n` and `shellcheck` on every script for each
-push/PR. Run the same checks locally before opening a PR:
+Each `tests/*.sh` is a standalone `set -euo pipefail` script that fails loudly (`FAIL: ...` on
+stderr, non-zero exit) instead of using a framework. Tests that exercise `docal` itself run it
+against a temporary `$HOME` (`TMP_HOME="$(mktemp -d)"`) so they never touch your real `~/.docal`
+or `~/Sites`.
+
+- `test_setup_generates_wp_config.sh` — runs `setup-wordpress.sh --skip-docker` and checks
+  `wp-config.php` comes out with real DB credentials. No Docker daemon required.
+- `test_config_get_set.sh` — `docal config get`/`set` round-trip, overwrite-in-place, rejects
+  unknown keys.
+- `test_sites_dir_resolution.sh` — env override / config override / legacy-fallback / default
+  `~/Sites`, per `resolve_sites_dir()`'s documented precedence.
+- `test_version_command.sh` — `docal version` matches the `VERSION` file.
+- `test_require_site_errors.sh` — missing site name / nonexistent site produce the documented
+  actionable error.
+- `test_doctor_smoke.sh` — `docal doctor` runs end-to-end and prints the expected structure; it
+  tolerates either exit code since CI's environment won't have mkcert/WSL2.
+
+CI (`.github/workflows/ci.yml`) runs `bash -n` + `shellcheck` on every script (including
+`install.sh` and the `lib-*.sh` files) and every `tests/*.sh`, for each push/PR. Run the same
+checks locally before opening a PR:
 
 ```bash
-bash -n scripts/docal scripts/*.sh tests/*.sh
-shellcheck scripts/docal scripts/*.sh tests/*.sh   # if you have it installed
-bash tests/test_setup_generates_wp_config.sh
+bash -n scripts/docal scripts/*.sh tests/*.sh install.sh
+shellcheck scripts/docal scripts/*.sh tests/*.sh install.sh   # if you have it installed
+for t in tests/*.sh; do bash "$t"; done
 ```
 
 ## Conventions
@@ -139,8 +188,16 @@ bash tests/test_setup_generates_wp_config.sh
 - Prefer extending `scripts/docal` + `scripts/setup-wordpress.sh` over one-off hacks.
 - Keep import prompts interactive (Enter = skip), matching the plugins/wpress UX.
 - Don't invent new import source directories — use `wpress/`, `dbs/`, `files/`, `plugins/`.
-- Site credentials and env live in `sites/<slug>/.env`.
+- Site credentials and env live in `<site-dir>/.env` (see `docs/configuration.md` for where
+  `<sites_dir>` itself resolves to).
 - After a DB import on an existing site, prefer the `docal import-db` / `docal replace-url`
   patterns already in the CLI over ad hoc `wp` calls.
-- README.md is the user-facing reference — update it whenever CLI/import/Docker-preflight
-  behavior changes.
+- New per-site create-time settings (like `ADMIN_USER`) should follow the existing
+  `SITE_DOMAIN`/`ADMIN_EMAIL` pattern end to end: a `cmd_create` flag, a config-file fallback in
+  `lib-config.sh`'s known keys, a `setup-wordpress.sh` default + interactive `ask` prompt, a
+  template placeholder, and a line in `.env` — don't wire up only some of these, half-configurable
+  settings are worse than none.
+- README.md only documents features that exist; anything planned but not built goes in its
+  Roadmap section (and `CHANGELOG.md`'s Roadmap note), never presented as current behavior.
+- README.md and `docs/*.md` are the user-facing reference — update them whenever CLI/import/
+  Docker-preflight/config behavior changes.

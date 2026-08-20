@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest a WordPress-focused workflow improvement for docal
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Docal stays deliberately narrow — WordPress-only, CLI-first, WSL2-first. Requests that
+        turn it into a general-purpose Docker environment or add a GUI are unlikely to be
+        accepted; see the README's "Who is docal not for?" section.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What WordPress workflow is this solving?
+      description: What do you have to do manually today that this would automate?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed command/behavior
+      description: Sketch the command(s) you'd expect, e.g. `docal foo <site> --bar`.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing docal commands, other tools, or manual steps you're working around today.

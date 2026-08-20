@@ -1,0 +1,33 @@
+name: Bug report
+description: Something in docal doesn't work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: docal doctor output
+      description: Paste the output of `docal doctor` here.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: docal version
+      description: Output of `docal version`
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: WSL2 distro/version, Docker version, whether it's a fresh install or an upgraded one, etc.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Command output, `docal logs <site>`, etc. Remove any real credentials/domains first.
+      render: text

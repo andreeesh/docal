@@ -19,3 +19,9 @@ proxy/certs/*
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# Personal tooling/config carried over from other working directories —
+# not part of the docal project itself.
+.claude
+.cursor
+.the-ridge
