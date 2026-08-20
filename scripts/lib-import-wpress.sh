@@ -12,6 +12,7 @@ finalize_imported_site() {
 
   docker compose exec -T wordpress wp plugin deactivate wp-rocket --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
   docker compose exec -T wordpress bash -c "rm -rf /var/www/html/wp-content/cache/wp-rocket /var/www/html/wp-content/cache/min 2>/dev/null" || true
+  echo "✓ WP Rocket disabled"
 
   old_siteurl="$(docker compose exec -T wordpress wp option get siteurl --skip-plugins=wp-rocket --allow-root 2>/dev/null | tr -d '\r\n')" || true
   new_siteurl="https://${SITE_SLUG}.${SITE_DOMAIN}"
@@ -20,7 +21,7 @@ finalize_imported_site() {
   docker compose exec -T wordpress wp option update home "${new_siteurl}" --skip-plugins=wp-rocket --allow-root
 
   if [[ -n "${old_siteurl}" && "${old_siteurl}" != "${new_siteurl}" ]]; then
-    echo "[info] Replacing URLs: ${old_siteurl} → ${new_siteurl}"
+    echo "✓ Production URL detected: ${old_siteurl}"
     docker compose exec -T wordpress wp search-replace "${old_siteurl}" "${new_siteurl}" \
       --recurse-objects --skip-columns=guid --skip-plugins=wp-rocket --allow-root
     old_siteurl_http="${old_siteurl/https:\/\//http:\/\/}"
@@ -28,6 +29,7 @@ finalize_imported_site() {
       docker compose exec -T wordpress wp search-replace "${old_siteurl_http}" "${new_siteurl}" \
         --recurse-objects --skip-columns=guid --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
     fi
+    echo "✓ URLs replaced"
   fi
 
   old_domain="${old_siteurl#https://}"
@@ -44,14 +46,17 @@ finalize_imported_site() {
   docker compose exec -T wordpress mkdir -p /var/www/html/wp-content/uploads/elementor/css 2>/dev/null || true
   docker compose exec -T wordpress chown -R www-data:www-data /var/www/html/wp-content/uploads/elementor 2>/dev/null || true
   docker compose exec -T wordpress wp elementor flush_css --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
+  echo "✓ Elementor CSS regenerated"
 
   "${SCRIPTS_DIR}/ensure-wp-rewrites.sh" "${SITE_DIR}" || echo "[warn] ensure-wp-rewrites.sh failed after import — check .htaccess manually." >&2
+  echo "✓ Permalinks flushed"
 
   local admin_user="${ADMIN_USER:-admin}"
   docker compose exec -T wordpress wp user update "${admin_user}" --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
     docker compose exec -T wordpress wp user create "${admin_user}" "${ADMIN_EMAIL}" --role=administrator --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
 
   docker compose exec -T wordpress wp cache flush --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
+  echo "✓ Local administrator ready"
 }
 
 import_wpress_backup() {
@@ -73,7 +78,7 @@ import_wpress_backup() {
   echo "[info] Importing backup (this may take several minutes)..."
   docker compose exec -T wordpress wp ai1wm restore "${wpress_name}" --yes --allow-root
   docker compose exec -T wordpress chown -R www-data:www-data /var/www/html/wp-content
+  echo "✓ Backup restored"
 
   finalize_imported_site
-  echo "[ok] Backup imported."
 }

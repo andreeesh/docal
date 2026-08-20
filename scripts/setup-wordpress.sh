@@ -635,6 +635,13 @@ if [[ "${NON_INTERACTIVE}" -eq 0 ]]; then
   fi
 fi
 
-echo "[ok] https://${SITE_SLUG}.${SITE_DOMAIN}"
-
+echo ""
+echo "✓ WordPress installed"
+echo "✓ PHP ${PHP_VERSION}"
+echo "✓ MySQL ${MYSQL_VERSION}"
+echo "✓ HTTPS configured"
+echo "✓ WP-CLI ready"
+echo ""
+echo "https://${SITE_SLUG}.${SITE_DOMAIN}"
+echo ""
 echo "[info] Credentials: ${ADMIN_USER} / admin"

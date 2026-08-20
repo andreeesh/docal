@@ -117,6 +117,11 @@ site_url() {
   grep '^SITE_URL=' "${SITES_DIR}/${1}/.env" 2>/dev/null | cut -d= -f2- || echo '-'
 }
 
+site_env() {
+  local site="$1" key="$2"
+  grep "^${key}=" "${SITES_DIR}/${site}/.env" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '\r'
+}
+
 site_running() {
   local n=0
   n="$(cd "${SITES_DIR}/${1}" && docker compose ps -q 2>/dev/null | wc -l)" || true
@@ -297,6 +302,11 @@ cmd_delete() {
 
 # ── list ──────────────────────────────────────────────────────────────────────
 cmd_list() {
+  local json=0 arg
+  for arg in "$@"; do
+    [[ "${arg}" == "--json" ]] && json=1
+  done
+
   local sites=()
   if [[ -d "${SITES_DIR}" ]]; then
     while IFS= read -r -d '' d; do
@@ -305,22 +315,45 @@ cmd_list() {
   fi
 
   if [[ ${#sites[@]} -eq 0 ]]; then
-    info "No sites found. Create one with: docal create"
+    if [[ "${json}" -eq 1 ]]; then
+      echo "[]"
+    else
+      info "No sites found. Create one with: docal create"
+    fi
+    return 0
+  fi
+
+  if [[ "${json}" -eq 1 ]]; then
+    echo "["
+    local first=1 site status url php mysql
+    for site in "${sites[@]}"; do
+      url="$(site_url "${site}")"
+      php="$(site_env "${site}" PHP_VERSION)"
+      mysql="$(site_env "${site}" MYSQL_VERSION)"
+      site_running "${site}" 2>/dev/null && status="running" || status="stopped"
+      [[ "${first}" -eq 1 ]] && first=0 || echo ","
+      printf '  {"site":"%s","status":"%s","php":"%s","mysql":"%s","url":"%s"}' \
+        "${site}" "${status}" "${php}" "${mysql}" "${url}"
+    done
+    echo ""
+    echo "]"
     return 0
   fi
 
   echo ""
-  printf "  ${BOLD}%-24s %-10s %s${NC}\n" "SITE" "STATUS" "URL"
-  printf "  %-24s %-10s %s\n" "────────────────────────" "──────────" "────────────────────────────────────"
+  printf "  ${BOLD}%-20s %-10s %-8s %-8s %s${NC}\n" "SITE" "STATUS" "PHP" "MYSQL" "URL"
+  printf "  %-20s %-10s %-8s %-8s %s\n" "────────────────────" "──────────" "────────" "────────" "────────────────────────────────────"
   for site in "${sites[@]}"; do
-    local status color url
+    local status color url php mysql
     url="$(site_url "${site}")"
+    php="$(site_env "${site}" PHP_VERSION)"; php="${php:--}"
+    mysql="$(site_env "${site}" MYSQL_VERSION)"; mysql="${mysql:--}"
     if site_running "${site}" 2>/dev/null; then
       status="running"; color="${GREEN}"
     else
       status="stopped"; color="${RED}"
     fi
-    printf "  %-24s ${color}%-10s${NC} %s\n" "${site}" "${status}" "${url}"
+    printf "  %-20s ${color}%-10s${NC} %-8s %-8s %s\n" "${site}" "${status}" "${php}" "${mysql}" "${url}"
   done
   echo ""
 }
@@ -329,22 +362,48 @@ cmd_list() {
 cmd_info() {
   require_site "${1:-}"
   local site="$1"
-  local env_file="${SITES_DIR}/${site}/.env"
+  local site_dir="${SITES_DIR}/${site}"
+  local status status_color url php mysql admin_user
+
+  url="$(site_url "${site}")"
+  php="$(site_env "${site}" PHP_VERSION)"; php="${php:--}"
+  mysql="$(site_env "${site}" MYSQL_VERSION)"; mysql="${mysql:--}"
+  admin_user="$(site_env "${site}" ADMIN_USER)"; admin_user="${admin_user:-admin}"
+  if site_running "${site}" 2>/dev/null; then
+    status="running"; status_color="${GREEN}"
+  else
+    status="stopped"; status_color="${RED}"
+  fi
 
   echo ""
-  echo -e "  ${BOLD}${CYAN}${site}${NC}"
+  echo -e "  ${BOLD}${CYAN}Docal site: ${site}${NC}"
   echo ""
-  if [[ -f "${env_file}" ]]; then
-    while IFS='=' read -r key val; do
-      [[ "${key}" =~ ^# || -z "${key}" ]] && continue
-      printf "  ${BOLD}%-22s${NC} %s\n" "${key}" "${val}"
-    done < "${env_file}"
-  fi
-  printf "  ${BOLD}%-22s${NC} admin / admin\n" "WP_ADMIN"
+  printf "  ${BOLD}%-10s${NC} ${status_color}%s${NC}\n" "Status:" "${status}"
+  printf "  ${BOLD}%-10s${NC} %s\n" "URL:" "${url}"
+  printf "  ${BOLD}%-10s${NC} %s/wp-admin\n" "Admin:" "${url}"
   echo ""
-  info "Containers:"
-  cd "${SITES_DIR}/${site}"
-  docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || true
+  printf "  ${BOLD}%-10s${NC} %s\n" "PHP:" "${php}"
+  printf "  ${BOLD}%-10s${NC} %s\n" "MySQL:" "${mysql}"
+  echo ""
+  echo -e "  ${BOLD}Path:${NC}"
+  echo "  ${site_dir}"
+  echo ""
+  echo -e "  ${BOLD}Containers:${NC}"
+  local svc running_services
+  running_services="$(cd "${site_dir}" && docker compose ps --status running --services 2>/dev/null)" || running_services=""
+  while IFS= read -r svc; do
+    [[ -z "${svc}" || "${svc}" == "wp-init" ]] && continue
+    if grep -qx "${svc}" <<< "${running_services}"; then
+      echo -e "    ${GREEN}✓${NC} ${svc}"
+    else
+      echo -e "    ${RED}✗${NC} ${svc}"
+    fi
+  done < <(cd "${site_dir}" && docker compose config --services 2>/dev/null)
+  echo ""
+  echo -e "  ${BOLD}Credentials:${NC}"
+  echo "  ${admin_user} / admin"
+  echo ""
+  info "Full config (including DB credentials): ${site_dir}/.env"
   echo ""
 }
 
@@ -545,7 +604,8 @@ cmd_import_wpress() {
   # shellcheck source=lib-import-wpress.sh
   source "${SCRIPTS_DIR}/lib-import-wpress.sh"
   import_wpress_backup "${selected}"
-  ok "wpress backup imported into '${site}'."
+  echo ""
+  ok "$(site_url "${site}")"
 }
 
 # ── lint ──────────────────────────────────────────────────────────────────────
@@ -953,39 +1013,59 @@ cmd_uninstall() {
 # ── help ──────────────────────────────────────────────────────────────────────
 cmd_help() {
   echo ""
-  echo -e "  ${BOLD}${CYAN}docal${NC}  —  Local WordPress site manager with Docker"
+  echo -e "  ${BOLD}${CYAN}docal${NC}  —  WordPress-first local development for WSL2"
   echo ""
-  echo -e "  ${BOLD}Commands:${NC}"
-  echo "    create [<site>] [options]        Create a new WordPress site"
+  echo -e "  ${BOLD}Usage:${NC}"
+  echo "    docal <command> [options]"
+  echo ""
+  echo -e "  ${BOLD}Sites${NC}"
+  echo "    create [<site>] [options]        Create a WordPress site"
+  echo "    list [--json]                    List sites"
+  echo "    info    <site>                   Show status, URL, versions, credentials"
   echo "    start   <site>                   Start containers"
   echo "    stop    <site>                   Stop containers"
   echo "    restart <site>                   Restart containers"
   echo "    rebuild <site>                   Rebuild image and fix permissions"
-  echo "    fix-rewrites <site>              Fix permalinks/REST API without rebuild"
   echo "    delete  <site>                   Delete site and all its data"
+  echo ""
+  echo -e "  ${BOLD}WordPress${NC}"
+  echo "    wp      <site> <command>         Run a WP-CLI command"
+  echo "    import-wpress <site> [file]      Restore an All-in-One (.wpress) backup into an existing site"
+  echo "    replace-url <site> <old> <new>   Replace URLs safely across the database"
+  echo "    fix-rewrites <site>              Repair permalinks/REST API without rebuild"
+  echo "    lint    <site> [path ...]        Lint PHP files with the site's own PHP version"
+  echo ""
+  echo -e "  ${BOLD}Database${NC}"
   echo "    export-db <site> [file]          Export database to .sql.gz"
   echo "    import-db <site> [file]          Import database from .sql.gz"
-  echo "    import-wpress <site> [file]      Restore an All-in-One (.wpress) backup into an existing site"
-  echo "    list                             List all sites with status"
-  echo "    info    <site>                   Show URL, credentials and status"
+  echo ""
+  echo -e "  ${BOLD}Development${NC}"
+  echo "    exec    <site> [command]         Run a command in the WordPress container"
   echo "    logs    <site> [service]         Tail logs in real time"
-  echo "    exec    <site> [command]         Shell into the WordPress container"
-  echo "    wp      <site> <command>         Run a WP-CLI command"
-  echo "    lint    <site> [path ...]        Lint PHP files with the site's own PHP version"
-  echo "    replace-url <site> <old> <new>   Replace URLs across the database"
-  echo "    clean-certs                      Delete certificates for removed sites"
-  echo "    proxy   [start|stop|restart|status]  Manage the Traefik proxy"
+  echo ""
+  echo -e "  ${BOLD}Sharing${NC}"
   echo "    tunnel  <start|stop|status|delete|url> <site>"
   echo "                                     Cloudflare Tunnel — expose a site publicly (optional, needs your own domain)"
-  echo "    install                          Install docal to /usr/local/bin"
+  echo ""
+  echo -e "  ${BOLD}Docal${NC}"
+  echo "    doctor  [--fix]                  Diagnose (and optionally fix) your environment"
+  echo "    config  [get|set] ...            View or change global configuration"
+  echo "    update                           Update docal in place"
+  echo "    install                          Symlink docal onto PATH (usually done by install.sh)"
+  echo "    uninstall                        Remove the docal command and ~/.docal (sites are untouched)"
+  echo "    version                          Show installed version"
+  echo "    clean-certs                      Delete TLS certificates for removed sites"
+  echo "    proxy   [start|stop|restart|status]  Manage the shared Traefik proxy"
+  echo "    help                             Show this help"
   echo ""
   echo -e "  ${BOLD}Options for create:${NC}"
   echo "    --title=<title>                  Site title        (default: site name)"
-  echo "    --domain=<domain>                Local domain      (default: localhost)"
-  echo "    --email=<email>                  Admin email       (default: admin@docal.com)"
-  echo "    --php=<version>                  PHP version       (default: latest)"
-  echo "    --mysql=<version>                MySQL version     (default: 8.4)"
-  echo "    --upload=<size>                  Max upload size   (default: 2G)"
+  echo "    --domain=<domain>                Local domain      (default: localhost, or config default_domain)"
+  echo "    --email=<email>                  Admin email       (default: admin@docal.com, or config admin_email)"
+  echo "    --admin-user=<user>              Admin username    (default: admin, or config admin_user)"
+  echo "    --php=<version>                  PHP version       (default: latest, or config default_php)"
+  echo "    --mysql=<version>                MySQL version     (default: 8.4, or config default_mysql)"
+  echo "    --upload=<size>                  Max upload size   (default: 2G, or config default_upload_limit)"
   echo "    --repo=<url>                     Git repo to clone (default: official WordPress)"
   echo "    --aiowp                          Install All-in-One WP Migration"
   echo ""
@@ -996,6 +1076,8 @@ cmd_help() {
   echo "    docal create myshop --aiowp"
   echo "    docal list"
   echo "    docal info myshop"
+  echo "    docal doctor"
+  echo "    docal config set default_php 8.3"
   echo "    docal wp myshop plugin list --status=active"
   echo "    docal wp myshop user list"
   echo "    docal exec myshop bash"
@@ -1028,7 +1110,7 @@ case "${COMMAND}" in
   rebuild)            cmd_rebuild "$@" ;;
   fix-rewrites|rewrites) cmd_fix_rewrites "$@" ;;
   delete|remove|rm)   cmd_delete "$@" ;;
-  list|ls)            cmd_list ;;
+  list|ls)            cmd_list "$@" ;;
   info|describe)      cmd_info "$@" ;;
   logs)               cmd_logs "$@" ;;
   exec|shell)         cmd_exec "$@" ;;
