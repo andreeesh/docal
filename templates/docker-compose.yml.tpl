@@ -126,7 +126,7 @@ services:
       done;
       TRIES=10;
       while [ $$TRIES -gt 0 ]; do
-        OUT=$$(wp core install --allow-root --url=https://__SITE_SLUG__.__SITE_DOMAIN__ --title='__SITE_TITLE__' --admin_user=admin --admin_password=admin --admin_email=__ADMIN_EMAIL__ --skip-email 2>&1);
+        OUT=$$(wp core install --allow-root --url=https://__SITE_SLUG__.__SITE_DOMAIN__ --title='__SITE_TITLE__' --admin_user=__ADMIN_USER__ --admin_password=admin --admin_email=__ADMIN_EMAIL__ --skip-email 2>&1);
         RC=$$?;
         if [ $$RC -eq 0 ]; then echo 'WordPress installed.'; break; fi;
         if echo "$$OUT" | grep -qi 'already installed'; then echo 'WordPress was already installed.'; break; fi;

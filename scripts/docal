@@ -164,11 +164,21 @@ cmd_create() {
       --mysql=*)  export MYSQL_VERSION="${arg#--mysql=}" ;;
       --upload=*) export MAX_UPLOAD_SIZE="${arg#--upload=}" ;;
       --repo=*)   export WP_REPO_URL="${arg#--repo=}" ;;
+      --admin-user=*) export ADMIN_USER="${arg#--admin-user=}" ;;
       --aiowp)    export INSTALL_AIOWP_MIGRATION=1 ;;
       --*)        err "Unknown option: ${arg}. Run: docal help" ;;
       *)          site_name="${arg}" ;;
     esac
   done
+
+  # Flags win; otherwise fall back to global config (docal config set ...);
+  # setup-wordpress.sh applies its own hardcoded defaults after this.
+  export PHP_VERSION="${PHP_VERSION:-$(config_get default_php)}"
+  export MYSQL_VERSION="${MYSQL_VERSION:-$(config_get default_mysql)}"
+  export SITE_DOMAIN="${SITE_DOMAIN:-$(config_get default_domain)}"
+  export ADMIN_EMAIL="${ADMIN_EMAIL:-$(config_get admin_email)}"
+  export ADMIN_USER="${ADMIN_USER:-$(config_get admin_user)}"
+  export MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-$(config_get default_upload_limit)}"
 
   if [[ -n "${site_name}" ]]; then
     export SITE_NAME="${site_name}"
@@ -486,6 +496,8 @@ cmd_import_wpress() {
   SITE_SLUG="$(grep '^SITE_SLUG=' "${site_dir}/.env" | cut -d= -f2- | tr -d '\r')"
   SITE_DOMAIN="$(grep '^SITE_DOMAIN=' "${site_dir}/.env" | cut -d= -f2- | tr -d '\r')"
   ADMIN_EMAIL="$(grep '^ADMIN_EMAIL=' "${site_dir}/.env" | cut -d= -f2- | tr -d '\r')"
+  ADMIN_USER="$(grep '^ADMIN_USER=' "${site_dir}/.env" | cut -d= -f2- | tr -d '\r')"
+  ADMIN_USER="${ADMIN_USER:-admin}"
   INSTALL_AIOWP_MIGRATION=0
   SITE_DIR="${site_dir}"
 

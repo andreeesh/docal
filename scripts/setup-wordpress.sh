@@ -276,6 +276,7 @@ SITE_NAME="${SITE_NAME:-demo}"
 SITE_TITLE="${SITE_TITLE:-Demo site}"
 SITE_DOMAIN="${SITE_DOMAIN:-localhost}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@docal.com}"
+ADMIN_USER="${ADMIN_USER:-admin}"
 SITE_SLUG="${SITE_SLUG:-demo}"
 DB_NAME="${DB_NAME:-}"
 DB_USER="${DB_USER:-wpuser}"
@@ -298,6 +299,7 @@ else
   ask "MySQL version (latest, 8.4, 8.0, 5.7)" "${MYSQL_VERSION}" MYSQL_VERSION
   ask "Site title" "${SITE_TITLE}" SITE_TITLE
   ask "Local domain (default: localhost)" "${SITE_DOMAIN}" SITE_DOMAIN
+  ask "Admin username" "${ADMIN_USER}" ADMIN_USER
   ask "Admin email" "${ADMIN_EMAIL}" ADMIN_EMAIL
   ask "Repository URL to clone (empty = official WordPress)" "${OFFICIAL_WP_REPO}" WP_REPO_URL
   if [[ -z "${WP_REPO_URL}" ]]; then
@@ -379,6 +381,7 @@ sed \
   -e "s|__SITE_DOMAIN__|${SITE_DOMAIN}|g" \
   -e "s|__SITE_URL__|https://${SITE_SLUG}.${SITE_DOMAIN}|g" \
   -e "s|__ADMIN_EMAIL__|${ADMIN_EMAIL}|g" \
+  -e "s|__ADMIN_USER__|${ADMIN_USER}|g" \
   -e "s|__PHP_IMAGE_TAG__|${PHP_IMAGE_TAG}|g" \
   -e "s|__MYSQL_IMAGE_TAG__|${MYSQL_IMAGE_TAG}|g" \
   -e "s|__DB_NAME__|${DB_NAME}|g" \
@@ -418,6 +421,7 @@ DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
 ADMIN_EMAIL=${ADMIN_EMAIL}
+ADMIN_USER=${ADMIN_USER}
 MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE}
 MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES}
 WP_MEMORY_LIMIT=${WP_MEMORY_LIMIT}
@@ -429,7 +433,7 @@ cat > "${SITE_DIR}/README.md" <<EOF
 WordPress site ready to run with Docker.
 
 - URL: https://${SITE_SLUG}.${SITE_DOMAIN}
-- Admin user: admin
+- Admin user: ${ADMIN_USER}
 - Admin password: admin
 - DB: ${DB_NAME}
 
@@ -633,4 +637,4 @@ fi
 
 echo "[ok] https://${SITE_SLUG}.${SITE_DOMAIN}"
 
-echo "[info] Credentials: admin / admin"
+echo "[info] Credentials: ${ADMIN_USER} / admin"

@@ -47,8 +47,9 @@ finalize_imported_site() {
 
   "${SCRIPTS_DIR}/ensure-wp-rewrites.sh" "${SITE_DIR}" || echo "[warn] ensure-wp-rewrites.sh failed after import — check .htaccess manually." >&2
 
-  docker compose exec -T wordpress wp user update admin --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
-    docker compose exec -T wordpress wp user create admin "${ADMIN_EMAIL}" --role=administrator --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
+  local admin_user="${ADMIN_USER:-admin}"
+  docker compose exec -T wordpress wp user update "${admin_user}" --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
+    docker compose exec -T wordpress wp user create "${admin_user}" "${ADMIN_EMAIL}" --role=administrator --user_pass=admin --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
 
   docker compose exec -T wordpress wp cache flush --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
 }
