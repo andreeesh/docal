@@ -861,6 +861,16 @@ cmd_config() {
   esac
 }
 
+# ── version ───────────────────────────────────────────────────────────────────
+cmd_version() {
+  local version_file="${DOCAL_DIR}/VERSION"
+  if [[ -f "${version_file}" ]]; then
+    echo "Docal $(tr -d '[:space:]' < "${version_file}")"
+  else
+    echo "Docal (unknown version — VERSION file not found in ${DOCAL_DIR})"
+  fi
+}
+
 # ── help ──────────────────────────────────────────────────────────────────────
 cmd_help() {
   echo ""
@@ -927,7 +937,7 @@ COMMAND="${1:-help}"
 shift 2>/dev/null || true
 
 case "${COMMAND}" in
-  help|--help|-h|install|clean-certs|cc|config) : ;;
+  help|--help|-h|install|clean-certs|cc|config|version|--version|-v) : ;;
   *) ensure_docker "$@" ;;
 esac
 
@@ -954,6 +964,7 @@ case "${COMMAND}" in
   tunnel)             cmd_tunnel "$@" ;;
   config)             cmd_config "$@" ;;
   install)            cmd_install ;;
+  version|--version|-v) cmd_version ;;
   help|--help|-h)     cmd_help ;;
   *)
     echo -e "${RED}Unknown command: ${COMMAND}${NC}"
