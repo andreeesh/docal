@@ -927,8 +927,11 @@ cmd_uninstall() {
   local target
   for target in /usr/local/bin/docal "${HOME}/.local/bin/docal"; do
     if [[ -L "${target}" ]]; then
-      rm -f "${target}"
-      ok "Removed ${target}"
+      if rm -f "${target}" 2>/dev/null; then
+        ok "Removed ${target}"
+      else
+        warn "Could not remove ${target} (no write permission). Run: sudo rm -f ${target}"
+      fi
     fi
   done
 
