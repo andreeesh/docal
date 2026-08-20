@@ -883,6 +883,13 @@ cmd_version() {
   fi
 }
 
+# ── doctor ────────────────────────────────────────────────────────────────────
+cmd_doctor() {
+  # shellcheck source=lib-doctor.sh
+  source "${SCRIPTS_DIR}/lib-doctor.sh"
+  doctor_run "$@"
+}
+
 # ── help ──────────────────────────────────────────────────────────────────────
 cmd_help() {
   echo ""
@@ -949,7 +956,7 @@ COMMAND="${1:-help}"
 shift 2>/dev/null || true
 
 case "${COMMAND}" in
-  help|--help|-h|install|clean-certs|cc|config|version|--version|-v) : ;;
+  help|--help|-h|install|clean-certs|cc|config|version|--version|-v|doctor) : ;;
   *) ensure_docker "$@" ;;
 esac
 
@@ -974,6 +981,7 @@ case "${COMMAND}" in
   clean-certs|cc)     cmd_clean_certs ;;
   proxy)              cmd_proxy "$@" ;;
   tunnel)             cmd_tunnel "$@" ;;
+  doctor)             cmd_doctor "$@" ;;
   config)             cmd_config "$@" ;;
   install)            cmd_install ;;
   version|--version|-v) cmd_version ;;
