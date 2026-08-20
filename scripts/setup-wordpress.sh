@@ -15,7 +15,8 @@ done
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="${BASE_DIR}/scripts"
 TEMPLATES_DIR="${BASE_DIR}/templates"
-SITES_DIR="${BASE_DIR}/sites"
+SITES_DIR="${SITES_DIR:-${BASE_DIR}/sites}"
+PROXY_DIR="${PROXY_DIR:-${BASE_DIR}/proxy}"
 
 mkdir -p "${SITES_DIR}"
 
@@ -78,7 +79,7 @@ php_memory_limit_for_upload() {
 generate_cert() {
   local slug="$1"
   local domain="$2"
-  local cert_dir="${BASE_DIR}/proxy/certs"
+  local cert_dir="${PROXY_DIR}/certs"
 
   if ! command -v mkcert >/dev/null 2>&1; then
     echo "[warn] mkcert not found — skipping TLS certificate generation." >&2

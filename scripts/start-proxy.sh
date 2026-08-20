@@ -3,7 +3,7 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROXY_DIR="${BASE_DIR}/proxy"
+PROXY_DIR="${PROXY_DIR:-${BASE_DIR}/proxy}"
 mkdir -p "${PROXY_DIR}"
 
 mkdir -p "${PROXY_DIR}/certs"
