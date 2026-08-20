@@ -15,7 +15,7 @@ jobs:
       - name: Syntax-check all shell scripts
         run: |
           set -e
-          for f in scripts/docal scripts/*.sh tests/*.sh; do
+          for f in scripts/docal scripts/*.sh tests/*.sh install.sh; do
             echo "bash -n $f"
             bash -n "$f"
           done
@@ -28,12 +28,17 @@ jobs:
         run: |
           shellcheck --version
           shellcheck --severity=error --shell=bash \
-            scripts/docal scripts/*.sh tests/*.sh
+            scripts/docal scripts/*.sh tests/*.sh install.sh
 
-  wp-config-test:
+  tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run wp-config generation test
-        run: bash tests/test_setup_generates_wp_config.sh
+      - name: Run test suite
+        run: |
+          set -e
+          for t in tests/*.sh; do
+            echo "── $t ──"
+            bash "$t"
+          done
