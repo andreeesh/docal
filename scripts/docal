@@ -890,6 +890,63 @@ cmd_doctor() {
   doctor_run "$@"
 }
 
+# ── update ────────────────────────────────────────────────────────────────────
+cmd_update() {
+  if [[ ! -d "${DOCAL_DIR}/.git" ]]; then
+    err "Not a git checkout: ${DOCAL_DIR}\n\nIf you installed docal manually, update it the same way you installed it."
+  fi
+
+  info "Checking for updates in ${DOCAL_DIR}..."
+  if ! git -C "${DOCAL_DIR}" diff --quiet || ! git -C "${DOCAL_DIR}" diff --cached --quiet; then
+    err "Local changes found in ${DOCAL_DIR} — refusing to update.\n\nCommit, stash, or discard them first, then run 'docal update' again."
+  fi
+
+  if ! git -C "${DOCAL_DIR}" pull --ff-only; then
+    err "Update failed. Your checkout may have diverged from its remote.\n\nInspect it with: git -C ${DOCAL_DIR} status"
+  fi
+
+  ok "Docal updated."
+  cmd_version
+}
+
+# ── uninstall ─────────────────────────────────────────────────────────────────
+cmd_uninstall() {
+  echo ""
+  warn "This removes the docal command and ${DOCAL_HOME} (its config and proxy state)."
+  warn "Your sites in ${SITES_DIR} are NOT touched."
+  echo ""
+  read -r -p "  Type 'uninstall' to confirm: " confirm
+  [[ "${confirm}" != "uninstall" ]] && { info "Cancelled."; exit 0; }
+
+  echo ""
+  info "Stopping the shared proxy..."
+  if [[ -f "${PROXY_DIR}/docker-compose.yml" ]]; then
+    (cd "${PROXY_DIR}" && docker compose down 2>/dev/null) || true
+  fi
+
+  local target
+  for target in /usr/local/bin/docal "${HOME}/.local/bin/docal"; do
+    if [[ -L "${target}" ]]; then
+      rm -f "${target}"
+      ok "Removed ${target}"
+    fi
+  done
+
+  if [[ "${DOCAL_DIR}" == "${DOCAL_HOME}"/* ]]; then
+    rm -rf "${DOCAL_HOME}"
+    ok "Removed ${DOCAL_HOME}"
+  else
+    warn "Not removing ${DOCAL_DIR} (looks like a manual clone, not a managed install)."
+    warn "Remove it yourself if you no longer need it."
+    rm -rf "${DOCAL_HOME}/proxy" "${DOCAL_CONFIG}" 2>/dev/null || true
+  fi
+
+  echo ""
+  ok "Docal uninstalled."
+  info "Your sites are still at: ${SITES_DIR}"
+  info "Their containers keep running until you stop them — use 'docker compose down' in each site directory to fully clean up."
+}
+
 # ── help ──────────────────────────────────────────────────────────────────────
 cmd_help() {
   echo ""
@@ -956,7 +1013,7 @@ COMMAND="${1:-help}"
 shift 2>/dev/null || true
 
 case "${COMMAND}" in
-  help|--help|-h|install|clean-certs|cc|config|version|--version|-v|doctor) : ;;
+  help|--help|-h|install|clean-certs|cc|config|version|--version|-v|doctor|update|uninstall) : ;;
   *) ensure_docker "$@" ;;
 esac
 
@@ -983,6 +1040,8 @@ case "${COMMAND}" in
   tunnel)             cmd_tunnel "$@" ;;
   doctor)             cmd_doctor "$@" ;;
   config)             cmd_config "$@" ;;
+  update)             cmd_update ;;
+  uninstall)          cmd_uninstall ;;
   install)            cmd_install ;;
   version|--version|-v) cmd_version ;;
   help|--help|-h)     cmd_help ;;
