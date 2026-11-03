@@ -9,7 +9,7 @@ mkdir -p "$tmp/sites/good-site" "$tmp/outside"
 printf 'SITE_URL=https://good-site.localhost\n' > "$tmp/sites/good-site/.env"
 touch "$tmp/sites/good-site/docker-compose.yml"
 ln -s "$tmp/outside" "$tmp/sites/linked-site"
-export SITES_DIR="$tmp/sites"
+export DOCAL_SITES_DIR="$tmp/sites"
 
 check_rejected() {
   local site="$1" output
