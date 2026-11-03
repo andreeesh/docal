@@ -44,6 +44,11 @@ if [[ -d "${DOCAL_REPO_DIR}/.git" ]]; then
   if ! git -C "${DOCAL_REPO_DIR}" diff --quiet || ! git -C "${DOCAL_REPO_DIR}" diff --cached --quiet; then
     die "Local changes found in ${DOCAL_REPO_DIR} — refusing to overwrite. Commit/stash them, or remove that directory and re-run this installer."
   fi
+  CURRENT_BRANCH="$(git -C "${DOCAL_REPO_DIR}" symbolic-ref --quiet --short HEAD || true)"
+  [[ "${CURRENT_BRANCH}" == "main" ]] || die "Existing checkout is on '${CURRENT_BRANCH:-detached HEAD}', not main. Refusing to update it automatically."
+  if [[ -n "$(git -C "${DOCAL_REPO_DIR}" ls-files --others --exclude-standard)" ]]; then
+    die "Untracked files found in ${DOCAL_REPO_DIR}. Review them before updating."
+  fi
   git -C "${DOCAL_REPO_DIR}" pull --ff-only || die "Update failed. Inspect it with: git -C ${DOCAL_REPO_DIR} status"
 else
   info "Cloning docal into ${DOCAL_REPO_DIR}..."
@@ -53,22 +58,35 @@ fi
 DOCAL_BIN="${DOCAL_REPO_DIR}/scripts/docal"
 chmod +x "${DOCAL_BIN}" "${DOCAL_REPO_DIR}"/scripts/*.sh 2>/dev/null || true
 
+# Never overwrite an unrelated executable or symlink.
+safe_link() {
+  local target="$1" existing
+  if [[ -e "${target}" || -L "${target}" ]]; then
+    existing="$(readlink -f -- "${target}" 2>/dev/null || true)"
+    [[ "${existing}" == "${DOCAL_BIN}" ]] || return 1
+  fi
+  ln -sfn -- "${DOCAL_BIN}" "${target}"
+}
+
 INSTALLED=0
-if ln -sf "${DOCAL_BIN}" /usr/local/bin/docal 2>/dev/null; then
-  ok "docal linked at /usr/local/bin/docal"
-  INSTALLED=1
-elif sudo -n ln -sf "${DOCAL_BIN}" /usr/local/bin/docal 2>/dev/null; then
-  ok "docal linked at /usr/local/bin/docal"
-  INSTALLED=1
-else
+if [[ ! -e /usr/local/bin/docal && ! -L /usr/local/bin/docal ]] || \
+   [[ "$(readlink -f /usr/local/bin/docal 2>/dev/null || true)" == "${DOCAL_BIN}" ]]; then
+  if safe_link /usr/local/bin/docal 2>/dev/null || \
+     sudo -n bash -c 'target="$1"; link="$2"; if [[ ! -e "$link" && ! -L "$link" ]] || [[ "$(readlink -f "$link" 2>/dev/null || true)" == "$target" ]]; then ln -sfn -- "$target" "$link"; else exit 1; fi' _ "${DOCAL_BIN}" /usr/local/bin/docal 2>/dev/null; then
+    ok "docal linked at /usr/local/bin/docal"
+    INSTALLED=1
+  fi
+fi
+
+if [[ "${INSTALLED}" -eq 0 ]]; then
   mkdir -p "${HOME}/.local/bin"
-  ln -sf "${DOCAL_BIN}" "${HOME}/.local/bin/docal"
+  safe_link "${HOME}/.local/bin/docal" || die "Existing command at ~/.local/bin/docal points elsewhere. Refusing to overwrite it."
   ok "docal linked at ${HOME}/.local/bin/docal"
   case ":${PATH}:" in
     *":${HOME}/.local/bin:"*) INSTALLED=1 ;;
     *) warn "${HOME}/.local/bin is not on your PATH. Add this to your shell profile:"
        echo ""
-       echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+       echo "    export PATH=\"\\$HOME/.local/bin:\\$PATH\""
        echo ""
        ;;
   esac
