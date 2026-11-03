@@ -344,6 +344,11 @@ fi
 DB_NAME="${DB_NAME:-wp_${SITE_SLUG}}"
 DB_USER="wp_${SITE_SLUG}"
 DB_PASSWORD="${DB_PASSWORD:-$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)}"
+# Existing sites keep their current WordPress administrator credentials.
+EXISTING_SITE=0
+if [[ -f "${SITE_DIR}/wordpress/wp-config.php" ]]; then
+  EXISTING_SITE=1
+fi
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)}"
 umask 077
 
@@ -648,4 +653,8 @@ echo ""
 echo "https://${SITE_SLUG}.${SITE_DOMAIN}"
 echo ""
 echo "[info] Admin username: ${ADMIN_USER}"
-echo "[info] Initial admin password: ${ADMIN_PASSWORD}"
+if [[ "${EXISTING_SITE}" -eq 0 ]]; then
+  echo "[info] Initial admin password: ${ADMIN_PASSWORD}"
+else
+  echo "[info] Existing administrator password was not changed."
+fi
