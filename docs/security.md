@@ -1,26 +1,17 @@
 # Security notes
 
-Docal is built for **local development only**. It intentionally trades security for convenience,
-the same way Lando/DDEV/Valet do — none of the choices below are safe defaults for anything
-reachable from outside your own machine.
+Docal is intended for **local development only**, not production hosting.
 
-- Every site's WordPress admin account defaults to `admin` / `admin` (the username is
-  configurable via `--admin-user` / `docal config set admin_user`; the password is not).
-- Database passwords are randomly generated but stored in plaintext in `<site-dir>/.env`.
-- The Traefik dashboard (`:8080`) has no authentication.
-- TLS certificates are signed by your local mkcert CA, not a public CA — they're only trusted on
-  machines where you've run `mkcert -install`.
+- New WordPress sites receive a randomly generated administrator password, displayed during initial creation. The administrator username defaults to `admin` and is configurable.
+- Existing WordPress administrator credentials are not reset when a site is reconfigured.
+- After a `.wpress` import, Docal attempts to set a new random password for the local administrator and reports failure if this cannot be done. The import workflow has not yet been validated with a disposable end-to-end backup.
+- Database credentials are generated randomly and stored in plaintext in `<site-dir>/.env`.
+- Generated site configuration may contain the initial administrator password. Protect site files and avoid sharing them.
+- Traefik binds ports 80, 443 and 8080 to `127.0.0.1` by default. Its dashboard has no authentication, even though it is loopback-only.
+- HTTPS uses a local mkcert certificate authority; certificates are trusted only where that CA has been installed.
 
-None of this is a problem on your own machine behind your own firewall. It becomes a problem the
-moment any of these ports are reachable from the internet — port forwarding, a cloud VM with a
-public IP, or `docal tunnel` pointed at a site you haven't hardened. **`admin`/`admin` is never
-acceptable outside local development, full stop** — if you need to share a site externally, use
-[`docal tunnel`](tunnels.md) with a throwaway domain, change the admin password first, and treat
-anything exposed through it as public.
+Local-only bindings do **not** make a site safe to share publicly. A Cloudflare Tunnel or other forwarding mechanism can expose WordPress to external users. Before sharing a site, review its users, passwords, plugins, sensitive data and tunnel access controls. Never expose a production backup containing real customer data without appropriate safeguards.
 
 ## Reporting a vulnerability
 
-Docal has no automated update-notification mechanism and no telemetry. If you find a security
-issue in docal itself (not in WordPress or a plugin you've installed), open an issue on the
-repository, or contact the maintainer directly if it's sensitive enough that a public issue isn't
-appropriate.
+Docal has no automated update-notification mechanism or telemetry. For security-sensitive findings, contact the maintainer privately rather than publishing exploit details in a public issue.
