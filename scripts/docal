@@ -30,7 +30,7 @@ require_site() {
   local site="${1:-}" root resolved
   [[ -n "${site}" ]] || err "Site name required. Usage: docal ${COMMAND} <site>"
   [[ "${site}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || err "Invalid site name: ${site}"
-  [[ -d "${SITES_DIR}/${site}" && ! -L "${SITES_DIR}/${site}" ]] || err "Site '${site}' not found or is a symlink."
+  [[ -d "${SITES_DIR}/${site}" && ! -L "${SITES_DIR}/${site}" ]] || err "Site '${site}' not found or is a symlink. List sites with: docal list"
   root="$(realpath -e -- "${SITES_DIR}")" || err "Sites directory is unavailable"
   resolved="$(realpath -e -- "${SITES_DIR}/${site}")" || err "Cannot resolve site path"
   [[ "${resolved}" == "${root}/${site}" ]] || err "Site path escapes the configured sites directory"
