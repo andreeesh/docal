@@ -32,9 +32,9 @@ services:
       - --api.dashboard=true
       - --api.insecure=true
     ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
+      - "127.0.0.1:8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./certs:/certs:ro
