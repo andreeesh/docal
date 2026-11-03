@@ -344,6 +344,13 @@ fi
 DB_NAME="${DB_NAME:-wp_${SITE_SLUG}}"
 DB_USER="wp_${SITE_SLUG}"
 DB_PASSWORD="${DB_PASSWORD:-$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)}"
+# Existing sites keep their current WordPress administrator credentials.
+EXISTING_SITE=0
+if [[ -f "${SITE_DIR}/wordpress/wp-config.php" ]]; then
+  EXISTING_SITE=1
+fi
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)}"
+umask 077
 
 mkdir -p "${SITE_DIR}/wordpress"
 
@@ -382,6 +389,7 @@ sed \
   -e "s|__SITE_URL__|https://${SITE_SLUG}.${SITE_DOMAIN}|g" \
   -e "s|__ADMIN_EMAIL__|${ADMIN_EMAIL}|g" \
   -e "s|__ADMIN_USER__|${ADMIN_USER}|g" \
+  -e "s|__ADMIN_PASSWORD__|${ADMIN_PASSWORD}|g" \
   -e "s|__PHP_IMAGE_TAG__|${PHP_IMAGE_TAG}|g" \
   -e "s|__MYSQL_IMAGE_TAG__|${MYSQL_IMAGE_TAG}|g" \
   -e "s|__DB_NAME__|${DB_NAME}|g" \
@@ -434,7 +442,7 @@ WordPress site ready to run with Docker.
 
 - URL: https://${SITE_SLUG}.${SITE_DOMAIN}
 - Admin user: ${ADMIN_USER}
-- Admin password: admin
+- Admin password: (shown once in terminal at creation)
 - DB: ${DB_NAME}
 
 Commands:
@@ -644,4 +652,9 @@ echo "✓ WP-CLI ready"
 echo ""
 echo "https://${SITE_SLUG}.${SITE_DOMAIN}"
 echo ""
-echo "[info] Credentials: ${ADMIN_USER} / admin"
+echo "[info] Admin username: ${ADMIN_USER}"
+if [[ "${EXISTING_SITE}" -eq 0 ]]; then
+  echo "[info] Initial admin password: ${ADMIN_PASSWORD}"
+else
+  echo "[info] Existing administrator password was not changed."
+fi
