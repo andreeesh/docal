@@ -27,9 +27,14 @@ PROXY_DIR="${DOCAL_HOME}/proxy"
 export PROXY_DIR
 
 require_site() {
-  [[ -z "${1:-}" ]] && err "Site name required. Usage: docal ${COMMAND} <site>"
-  [[ ! -d "${SITES_DIR}/${1}" ]] && err "Site '${1}' not found. List sites with: docal list"
-  return 0
+  local site="${1:-}" root resolved
+  [[ -n "${site}" ]] || err "Site name required. Usage: docal ${COMMAND} <site>"
+  [[ "${site}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || err "Invalid site name: ${site}"
+  [[ -d "${SITES_DIR}/${site}" && ! -L "${SITES_DIR}/${site}" ]] || err "Site '${site}' not found or is a symlink."
+  root="$(realpath -e -- "${SITES_DIR}")" || err "Sites directory is unavailable"
+  resolved="$(realpath -e -- "${SITES_DIR}/${site}")" || err "Cannot resolve site path"
+  [[ "${resolved}" == "${root}/${site}" ]] || err "Site path escapes the configured sites directory"
+  [[ -f "${resolved}/docker-compose.yml" && -f "${resolved}/.env" ]] || err "Not a managed Docal site: ${site}"
 }
 
 # ── docker preflight (install/start Docker Engine natively in WSL) ───────────
@@ -401,7 +406,7 @@ cmd_info() {
   done < <(cd "${site_dir}" && docker compose config --services 2>/dev/null)
   echo ""
   echo -e "  ${BOLD}Credentials:${NC}"
-  echo "  ${admin_user} / admin"
+  echo "  Username: ${admin_user} (password set at creation or last import)"
   echo ""
   info "Full config (including DB credentials): ${site_dir}/.env"
   echo ""
