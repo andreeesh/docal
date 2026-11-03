@@ -54,9 +54,13 @@ finalize_imported_site() {
   local admin_user="${ADMIN_USER:-admin}"
   local import_admin_password
   import_admin_password="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)"
-  docker compose exec -T wordpress wp user update "${admin_user}" --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
-    docker compose exec -T wordpress wp user create "${admin_user}" "${ADMIN_EMAIL}" --role=administrator --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
-  echo "[info] Imported site admin password for ${admin_user}: ${import_admin_password}"
+  if docker compose exec -T wordpress wp user update "${admin_user}" --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
+     docker compose exec -T wordpress wp user create "${admin_user}" "${ADMIN_EMAIL}" --role=administrator --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null; then
+    echo "[info] Imported site admin password for ${admin_user}: ${import_admin_password}"
+  else
+    echo "[error] Could not configure a local administrator after import." >&2
+    return 1
+  fi
 
   docker compose exec -T wordpress wp cache flush --skip-plugins=wp-rocket --allow-root 2>/dev/null || true
   echo "✓ Local administrator ready"
