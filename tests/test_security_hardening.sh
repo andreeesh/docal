@@ -31,15 +31,11 @@ check_rejected '/tmp'
 check_rejected 'good-site/../outside'
 check_rejected 'not-found'
 
-# Test the valid-site path without requiring Docker on the CI runner.
-mkdir -p "$tmp/bin"
-cat > "$tmp/bin/docker" <<'EOF'
-#!/usr/bin/env bash
-[[ "$*" == "compose stop" ]]
-EOF
-chmod +x "$tmp/bin/docker"
-export PATH="$tmp/bin:$PATH"
-scripts/docal stop good-site >/dev/null 2>&1 || {
+# Exercise the validation function directly; the CLI dispatch requires a live Docker daemon.
+mkdir -p "$tmp/repo/scripts"
+sed '/^# ── dispatch ──/,$d' scripts/docal > "$tmp/repo/scripts/docal"
+cp scripts/lib-config.sh "$tmp/repo/scripts/lib-config.sh"
+bash -c 'source "$1"; COMMAND=info; require_site good-site' _ "$tmp/repo/scripts/docal" || {
   echo "FAIL: valid site rejected" >&2; exit 1;
 }
 
