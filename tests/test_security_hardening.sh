@@ -31,8 +31,15 @@ check_rejected '/tmp'
 check_rejected 'good-site/../outside'
 check_rejected 'not-found'
 
-# A valid managed site must remain accessible.
-scripts/docal info good-site >/dev/null 2>&1 || {
+# Test the valid-site path without requiring Docker on the CI runner.
+mkdir -p "$tmp/bin"
+cat > "$tmp/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "compose stop" ]]
+EOF
+chmod +x "$tmp/bin/docker"
+export PATH="$tmp/bin:$PATH"
+scripts/docal stop good-site >/dev/null 2>&1 || {
   echo "FAIL: valid site rejected" >&2; exit 1;
 }
 
