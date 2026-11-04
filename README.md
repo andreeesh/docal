@@ -19,9 +19,10 @@ docal create mysite
 https://mysite.localhost
 ```
 
-> **Local development only.** Every default here (the `admin`/`admin` account, database
-> passwords, the open Traefik dashboard) is chosen for convenience on your own machine, not
-> security. See [Security notes](docs/security.md).
+> **Local development only.** Docal generates a random WordPress administrator password
+> for new sites and binds the shared proxy to loopback. The Traefik dashboard remains
+> unauthenticated on localhost, and database credentials are stored in local configuration.
+> Do not treat Docal as a production hosting environment. See [Security notes](docs/security.md).
 
 ---
 

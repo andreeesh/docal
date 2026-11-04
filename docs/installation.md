@@ -11,8 +11,10 @@ curl -fsSL https://raw.githubusercontent.com/andreeesh/docal/main/install.sh | b
 
 This clones docal into `~/.docal/repo` and symlinks `docal` onto your `PATH` (`/usr/local/bin/docal`,
 or `~/.local/bin/docal` if it can't write there — the installer tells you which). It's idempotent:
-running it again just updates the existing install (equivalent to `docal update`), and it never
-touches your sites.
+running it again updates an existing clean checkout on `main` with a fast-forward pull, and it never
+touches your sites. If the checkout is on another branch, has local changes, or contains untracked
+files, the installer stops rather than overwriting them. It also refuses to replace an unrelated
+`docal` executable or symlink.
 
 Check everything is in order, then create your first site:
 
