@@ -68,7 +68,7 @@ finalize_imported_site() {
 
 import_wpress_backup() {
   local selected_wpress="$1"
-  local wpress_name container_name
+  local wpress_name container_name restore_marker
   wpress_name="$(basename "${selected_wpress}")"
   container_name="docal-${SITE_SLUG}-wp"
 
@@ -82,8 +82,20 @@ import_wpress_backup() {
   docker cp "${selected_wpress}" "${container_name}:/var/www/html/wp-content/ai1wm-backups/${wpress_name}"
   docker compose exec -T wordpress chown www-data:www-data "/var/www/html/wp-content/ai1wm-backups/${wpress_name}"
 
+  # A successful exit code alone does not prove that a restore occurred.
+  # The marker is written to the fresh site's DB and must disappear when
+  # the backup replaces that database.
+  restore_marker="docal_restore_probe_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 16 || true)"
+  docker compose exec -T wordpress wp option add "${restore_marker}" pending --allow-root >/dev/null
   echo "[info] Importing backup (this may take several minutes)..."
-  docker compose exec -T wordpress wp ai1wm restore "${wpress_name}" --yes --allow-root
+  if ! docker compose exec -T wordpress wp ai1wm restore "${wpress_name}" --yes --allow-root; then
+    echo "[error] All-in-One WP Migration restore command failed. Check plugin/extension compatibility." >&2
+    return 1
+  fi
+  if docker compose exec -T wordpress wp option get "${restore_marker}" --allow-root >/dev/null 2>&1; then
+    echo "[error] Restore did not replace the WordPress database; refusing to report success." >&2
+    return 1
+  fi
   docker compose exec -T wordpress chown -R www-data:www-data /var/www/html/wp-content
   echo "✓ Backup restored"
 
