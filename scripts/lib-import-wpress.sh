@@ -6,7 +6,7 @@
 # SITE_DOMAIN, ADMIN_EMAIL, INSTALL_AIOWP_MIGRATION (0/1), and cd into
 # SITE_DIR (docker compose commands run against the site's compose file).
 
-# Post-import: local URL, cache cleanup, permalinks, admin/admin.
+# Post-import: local URL, cache cleanup, permalinks, secure local administrator.
 finalize_imported_site() {
   local old_siteurl new_siteurl old_domain old_siteurl_http
 
@@ -54,7 +54,7 @@ finalize_imported_site() {
   local admin_user="${ADMIN_USER:-admin}"
   local import_admin_password
   import_admin_password="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)"
-  if docker compose exec -T wordpress wp user update "${admin_user}" --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
+  if docker compose exec -T wordpress wp user update "${admin_user}" --role=administrator --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
      docker compose exec -T wordpress wp user create "${admin_user}" "${ADMIN_EMAIL}" --role=administrator --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null; then
     echo "[info] Imported site admin password for ${admin_user}: ${import_admin_password}"
   else
