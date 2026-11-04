@@ -6,7 +6,7 @@
 # SITE_DOMAIN, ADMIN_EMAIL, INSTALL_AIOWP_MIGRATION (0/1), and cd into
 # SITE_DIR (docker compose commands run against the site's compose file).
 
-# Post-import: local URL, cache cleanup, permalinks, admin/admin.
+# Post-import: local URL, cache cleanup, permalinks, secure local administrator.
 finalize_imported_site() {
   local old_siteurl new_siteurl old_domain old_siteurl_http
 
@@ -54,7 +54,7 @@ finalize_imported_site() {
   local admin_user="${ADMIN_USER:-admin}"
   local import_admin_password
   import_admin_password="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)"
-  if docker compose exec -T wordpress wp user update "${admin_user}" --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
+  if docker compose exec -T wordpress wp user update "${admin_user}" --role=administrator --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null || \
      docker compose exec -T wordpress wp user create "${admin_user}" "${ADMIN_EMAIL}" --role=administrator --user_pass="${import_admin_password}" --skip-plugins=wp-rocket --allow-root 2>/dev/null; then
     echo "[info] Imported site admin password for ${admin_user}: ${import_admin_password}"
   else
@@ -68,7 +68,7 @@ finalize_imported_site() {
 
 import_wpress_backup() {
   local selected_wpress="$1"
-  local wpress_name container_name
+  local wpress_name container_name restore_marker
   wpress_name="$(basename "${selected_wpress}")"
   container_name="docal-${SITE_SLUG}-wp"
 
@@ -82,8 +82,20 @@ import_wpress_backup() {
   docker cp "${selected_wpress}" "${container_name}:/var/www/html/wp-content/ai1wm-backups/${wpress_name}"
   docker compose exec -T wordpress chown www-data:www-data "/var/www/html/wp-content/ai1wm-backups/${wpress_name}"
 
+  # A successful exit code alone does not prove that a restore occurred.
+  # The marker is written to the fresh site's DB and must disappear when
+  # the backup replaces that database.
+  restore_marker="docal_restore_probe_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 16 || true)"
+  docker compose exec -T wordpress wp option add "${restore_marker}" pending --skip-plugins --skip-themes --allow-root >/dev/null
   echo "[info] Importing backup (this may take several minutes)..."
-  docker compose exec -T wordpress wp ai1wm restore "${wpress_name}" --yes --allow-root
+  if ! docker compose exec -T wordpress wp ai1wm restore "${wpress_name}" --yes --allow-root; then
+    echo "[error] All-in-One WP Migration restore command failed. Check plugin/extension compatibility." >&2
+    return 1
+  fi
+  if docker compose exec -T wordpress wp option get "${restore_marker}" --skip-plugins --skip-themes --allow-root >/dev/null 2>&1; then
+    echo "[error] Restore did not replace the WordPress database; refusing to report success." >&2
+    return 1
+  fi
   docker compose exec -T wordpress chown -R www-data:www-data /var/www/html/wp-content
   echo "✓ Backup restored"
 
