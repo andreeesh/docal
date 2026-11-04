@@ -86,13 +86,13 @@ import_wpress_backup() {
   # The marker is written to the fresh site's DB and must disappear when
   # the backup replaces that database.
   restore_marker="docal_restore_probe_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 16 || true)"
-  docker compose exec -T wordpress wp option add "${restore_marker}" pending --allow-root >/dev/null
+  docker compose exec -T wordpress wp option add "${restore_marker}" pending --skip-plugins --skip-themes --allow-root >/dev/null
   echo "[info] Importing backup (this may take several minutes)..."
   if ! docker compose exec -T wordpress wp ai1wm restore "${wpress_name}" --yes --allow-root; then
     echo "[error] All-in-One WP Migration restore command failed. Check plugin/extension compatibility." >&2
     return 1
   fi
-  if docker compose exec -T wordpress wp option get "${restore_marker}" --allow-root >/dev/null 2>&1; then
+  if docker compose exec -T wordpress wp option get "${restore_marker}" --skip-plugins --skip-themes --allow-root >/dev/null 2>&1; then
     echo "[error] Restore did not replace the WordPress database; refusing to report success." >&2
     return 1
   fi
