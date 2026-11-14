@@ -356,6 +356,12 @@ if [[ "${PREPARE_IMPORT}" -eq 1 ]]; then
   fi
 fi
 
+# A half-imported site cannot be turned into a normal install accidentally.
+if [[ "${PREPARE_IMPORT}" -eq 0 && -f "${SITE_DIR}/.docal-import-pending" ]]; then
+  echo "[error] Site '${SITE_SLUG}' is reserved for an import; normal creation is disabled." >&2
+  exit 1
+fi
+
 if [[ -d "${SITE_DIR}" && -f "${SITE_DIR}/docker-compose.yml" ]]; then
   if [[ "${NON_INTERACTIVE}" -eq 1 ]]; then
     echo "[info] Site '${SITE_SLUG}' already exists — updating configuration only (DB and code untouched)."
