@@ -4,13 +4,27 @@ set -euo pipefail
 
 SKIP_DOCKER=0
 NON_INTERACTIVE=0
+PREPARE_IMPORT=0
 for arg in "$@"; do
   case "$arg" in
     --skip-docker) SKIP_DOCKER=1 ;;
     --non-interactive) NON_INTERACTIVE=1 ;;
-    --help|-h) echo "Usage: $0 [--skip-docker] [--non-interactive]"; exit 0 ;;
+    --prepare-import) PREPARE_IMPORT=1 ;;
+    --help|-h) echo "Usage: $0 [--skip-docker] [--non-interactive] [--prepare-import]"; exit 0 ;;
   esac
 done
+
+# An import site must be identified explicitly. Normal creation is unchanged.
+if [[ "${PREPARE_IMPORT}" -eq 1 ]]; then
+  [[ "${NON_INTERACTIVE}" -eq 1 ]] || {
+    echo "[error] --prepare-import requires --non-interactive." >&2
+    exit 1
+  }
+  [[ -n "${SITE_NAME:-}" && "${SITE_NAME}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
+    echo "[error] --prepare-import requires an explicit lowercase site slug." >&2
+    exit 1
+  }
+fi
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="${BASE_DIR}/scripts"
@@ -318,6 +332,30 @@ fi
 
 SITE_DIR="${SITES_DIR}/${SITE_SLUG}"
 
+if [[ "${PREPARE_IMPORT}" -eq 1 ]]; then
+  # Do not reuse or reconfigure any site, even an incomplete installation.
+  if [[ -L "${SITES_DIR}" || -e "${SITE_DIR}" || -L "${SITE_DIR}" ]]; then
+    echo "[error] Import preparation requires a new, unused site directory." >&2
+    exit 1
+  fi
+  if [[ "${SKIP_DOCKER}" -eq 0 ]]; then
+    # Compose uses the site directory name as the project name. Existing
+    # containers and named volumes may belong to sites in other directories.
+    for container in "docal-${SITE_SLUG}-db" "docal-${SITE_SLUG}-wp"; do
+      if docker container inspect "${container}" >/dev/null 2>&1; then
+        echo "[error] Existing Docker container conflicts with import site: ${container}" >&2
+        exit 1
+      fi
+    done
+    for volume in "${SITE_SLUG}_db-data" "${SITE_SLUG}_db-socket"; do
+      if docker volume inspect "${volume}" >/dev/null 2>&1; then
+        echo "[error] Existing Docker volume conflicts with import site: ${volume}" >&2
+        exit 1
+      fi
+    done
+  fi
+fi
+
 if [[ -d "${SITE_DIR}" && -f "${SITE_DIR}/docker-compose.yml" ]]; then
   if [[ "${NON_INTERACTIVE}" -eq 1 ]]; then
     echo "[info] Site '${SITE_SLUG}' already exists — updating configuration only (DB and code untouched)."
@@ -415,7 +453,10 @@ output_buffering = Off
 EOF
 
 write_wp_config "${SITE_DIR}/wordpress"
-generate_cert "${SITE_SLUG}" "${SITE_DOMAIN}"
+# Do not register proxy certificates or expose a half-imported site.
+if [[ "${PREPARE_IMPORT}" -eq 0 ]]; then
+  generate_cert "${SITE_SLUG}" "${SITE_DOMAIN}"
+fi
 
 cat > "${SITE_DIR}/.env" <<EOF
 SITE_NAME=${SITE_NAME}
@@ -449,6 +490,49 @@ Commands:
   cd ${SITE_DIR}
   docker compose up -d --build
 EOF
+
+if [[ "${PREPARE_IMPORT}" -eq 1 ]]; then
+  # Presence means the site is reserved for a new-site import, NOT that SQL
+  # was loaded. The guarded SQL loader also verifies an empty database.
+  printf '%s\n' 'pending' > "${SITE_DIR}/.docal-import-pending"
+
+  if [[ "${SKIP_DOCKER}" -eq 1 ]]; then
+    echo "[info] New import site configuration prepared; Docker not started."
+    exit 0
+  fi
+
+  # Start ONLY MySQL. Starting WordPress might execute untrusted PHP before
+  # the incoming site's files and database have been normalized.
+  docker network create docal-proxy >/dev/null 2>&1 || true
+  cd "${SITE_DIR}"
+  echo "[info] Starting fresh import database (WordPress not started)..."
+  docker compose up -d db
+
+  db_ready=0
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    if docker compose exec -T -e "MYSQL_PWD=${DB_PASSWORD}" db \
+      mysql --batch --skip-column-names -u "${DB_USER}" "${DB_NAME}" \
+      -e 'SELECT 1' >/dev/null 2>&1; then
+      db_ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "${db_ready}" -ne 1 ]]; then
+    echo "[error] Fresh import database was not ready; site remains incomplete." >&2
+    exit 1
+  fi
+  db_tables="$(docker compose exec -T -e "MYSQL_PWD=${DB_PASSWORD}" db \
+    mysql --batch --skip-column-names -u "${DB_USER}" "${DB_NAME}" \
+    -e 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()')"
+  if [[ "${db_tables}" != "0" ]]; then
+    echo "[error] Fresh import database is not empty; refusing to proceed." >&2
+    exit 1
+  fi
+  echo "[ok] New site's MySQL database is empty and ready for import."
+  echo "[info] WordPress initialization, web container and public proxy were not started."
+  exit 0
+fi
 
 if [[ "${SKIP_DOCKER}" -eq 1 ]]; then
   echo "[info] --skip-docker: containers will not be started."
