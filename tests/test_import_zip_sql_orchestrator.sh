@@ -87,5 +87,21 @@ with tempfile.TemporaryDirectory() as tmp:
         os.environ.update(before)
     assert marker.read_text() == "untouched"
 
+# Failing subprocesses must never interpolate a generated admin password
+# into a user-visible exception.
+from types import SimpleNamespace
+original_run = m.subprocess.run
+try:
+    m.subprocess.run = lambda *args, **kwargs: SimpleNamespace(returncode=12)
+    try:
+        m.run("wp", "user", "update", "--user_pass=PRIVATE_TEST_PASSWORD")
+    except RuntimeError as exc:
+        assert "PRIVATE_TEST_PASSWORD" not in str(exc)
+        assert "12" in str(exc)
+    else:
+        raise AssertionError("Failed subprocess was treated as success")
+finally:
+    m.subprocess.run = original_run
+
 print("ZIP + SQL orchestration preflight tests passed")
 PY
