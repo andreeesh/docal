@@ -46,3 +46,36 @@ site; updating an existing site requires a separately designed explicit opt-in.
 The existing `import-db` and `import-wpress` commands remain available.
 This document is an implementation contract, **not** a claim that the proposed
 `docal import` command is already implemented.
+
+
+## Implemented: safe ZIP staging (not yet connected to Docal CLI)
+
+A Python 3 helper validates archives without extracting them:
+
+```bash
+python3 scripts/validate-wordpress-zip.py ./site.zip
+```
+
+To unpack into a **new directory that does not yet exist**:
+
+```bash
+python3 scripts/validate-wordpress-zip.py ./site.zip --extract-to /tmp/docal-zip-staging
+```
+
+The extractor strips an optional single top-level wrapper directory and
+supports full WordPress or `wp-content`-only archives. It preserves the
+original ZIP, **omits the source `wp-config.php`**, and creates output files
+with non-executable permissions. For `wp-content`-only archives, unrelated
+root-level files are ignored.
+
+Preflight rejects path traversal, absolute/Windows-style paths, backslashes,
+duplicate or case-colliding entries, symlinks, special files, encryption,
+partial WordPress core layouts, and file/directory collisions. It enforces
+limits of 250,000 entries, 10 GiB per file, 20 GiB uncompressed overall and
+a 1,000:1 compression ratio, and checks destination disk space. Extraction
+removes only its newly created staging directory when an error occurs.
+
+**Limitations:** this staging helper does not install WordPress, import SQL,
+replace URLs, create containers, or modify an existing Docal site. A ZIP can
+contain untrusted PHP that must not be executed without appropriate isolation.
+The upcoming importer must integrate staging and cleanup carefully.
