@@ -79,3 +79,45 @@ removes only its newly created staging directory when an error occurs.
 replace URLs, create containers, or modify an existing Docal site. A ZIP can
 contain untrusted PHP that must not be executed without appropriate isolation.
 The upcoming importer must integrate staging and cleanup carefully.
+
+
+## Implemented: SQL staging and guarded fresh-database loader
+
+SQL preparation supports plain `.sql` and gzip-compressed `.sql.gz` /
+`.gz` dumps:
+
+```bash
+python3 scripts/prepare-sql-dump.py ./database.sql.gz --output /tmp/docal-private-stage/database.sql
+```
+
+The destination must not exist and should be inside a private staging
+directory owned by the current user. The helper writes with mode 0600,
+checks the complete gzip stream (including integrity/truncation), rejects
+empty dumps and sources that are symbolic links, applies a 10 GiB
+uncompressed-size limit and removes partial output on failure. It
+does not execute or rewrite SQL.
+
+`scripts/lib-import-sql.sh` provides the **internal** function
+`docal_import_staged_sql_new_site`, intended to be sourced by the future
+import orchestrator. It requires `SITE_DIR`, `DB_NAME`, `DB_USER` and
+`DB_PASSWORD` populated from the new site's configuration, an absolute
+staged `.sql` file, and a `.docal-import-pending` marker under that site.
+Before making changes, it checks that the site's dedicated database
+contains zero tables. It then imports with the **scoped site database user**
+(not MySQL root), checks command exit status, and requires at least one
+table before reporting success. A failed SQL import can leave a partially
+populated **new** database; the orchestrator must handle cleanup.
+
+**Integration blocker:** the current `docal create` workflow installs
+WordPress and populates the database immediately. The future
+`docal import` orchestrator must provision a new empty site database
+without running initial WordPress installation, then stage ZIP and SQL
+before invoking this loader. The loader is deliberately **not connected
+to the CLI** and must never replace the existing interactive
+`docal import-db` command. Its current tests use mocked Docker calls;
+no real MySQL restoration has been validated yet.
+
+SQL dumps are **trusted user input** for development migration, not
+executable sandbox-safe data. MySQL permissions must remain limited
+to the isolated site's database and no dump should be replayed into
+another site's schema.
