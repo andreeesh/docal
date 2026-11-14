@@ -22,7 +22,7 @@ docal_import_staged_sql_new_site() {
     echo "[error] Missing local database credentials." >&2
     return 1
   fi
-  if [[ -z "${sql_file}" || ! -s "${sql_file}" || -L "${sql_file}" ]]; then
+  if [[ -z "${sql_file}" || "${sql_file}" != /* || ! -f "${sql_file}" || ! -s "${sql_file}" || -L "${sql_file}" ]]; then
     echo "[error] A nonempty staged SQL file is required." >&2
     return 1
   fi
