@@ -159,7 +159,10 @@ def certificate(name, proxy_dir):
     paths = [certs / (name + suffix) for suffix in (".crt", ".key", ".yml")]
     if any(p.exists() or p.is_symlink() for p in paths):
         raise ValueError("TLS certificate name already exists")
-    run("mkcert", "-install", capture=True)
+    installed = run("mkcert", "-install", capture=True, check=False)
+    if installed.returncode != 0:
+        print("[warn] Could not install the local CA; generating the certificate anyway.",
+              file=sys.stderr)
     run("mkcert", "-cert-file", str(paths[0]), "-key-file", str(paths[1]),
         name, capture=True)
     paths[1].chmod(0o600)
