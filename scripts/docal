@@ -204,6 +204,7 @@ cmd_create() {
 cmd_start() {
   require_site "${1:-}"
   local site="$1"
+  [[ ! -f "${SITES_DIR}/${site}/.docal-import-pending" ]] || err "Site is import-pending: finish the import before starting WordPress."
   info "Starting '${site}'..."
   bash "${SCRIPTS_DIR}/start-proxy.sh" >/dev/null 2>&1 || true
   cd "${SITES_DIR}/${site}"
@@ -235,6 +236,7 @@ cmd_restart() {
 cmd_rebuild() {
   require_site "${1:-}"
   local site="$1"
+  [[ ! -f "${SITES_DIR}/${site}/.docal-import-pending" ]] || err "Site is import-pending: finish the import before starting WordPress."
   local site_dir="${SITES_DIR}/${site}"
 
   export HOST_UID="${HOST_UID:-$(id -u)}"
