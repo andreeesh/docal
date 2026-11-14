@@ -49,6 +49,23 @@ https://myshop.localhost
 ⚠️ This replaces the site's database, uploads, and installed plugins/themes with whatever is in
 the backup. It asks for confirmation first.
 
+## All-in-One WP Migration compatibility
+
+Restoring a `.wpress` archive requires a functional `wp ai1wm restore` command.
+Depending on the installed plugin version, this may require a compatible
+Unlimited Extension. Docal does not bundle, download, or upgrade that commercial
+extension automatically.
+
+Before importing, verify the versions of both the migration plugin and any
+locally installed extension. A reported incompatibility (for example, extension
+2.84 when the migration plugin requires 2.89 or newer) must be resolved using
+a legitimate compatible extension or a supported alternative restore mechanism.
+
+Docal checks for a database replacement after running the restore command.
+A fresh WordPress site returning HTTP 200 does **not** prove that the backup
+was restored. If the restore fails, Docal reports an error and does not run
+post-import cleanup.
+
 ## What "finalize" does automatically
 
 Both paths above run the same shared cleanup after a database is imported (`lib-import-wpress.sh`
@@ -63,7 +80,7 @@ Both paths above run the same shared cleanup after a database is imported (`lib-
 - Flushes Elementor's CSS cache, if Elementor is present.
 - Fixes permalinks and REST API rewrites.
 - Ensures the local admin account exists with the configured username (`admin` by default, or
-  whatever `--admin-user`/`admin_user` was set to when the site was created) and password `admin`.
+  whatever `--admin-user`/`admin_user` was set to when the site was created) and a newly generated random password (shown locally after import).
 - Flushes the object cache.
 
 Files-only imports (uploads with no database) skip the URL-replace step and just fix ownership and
