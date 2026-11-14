@@ -17,11 +17,18 @@ IDENTIFIER = re.compile(r"[a-zA-Z0-9_]+")
 
 
 def run(*args, cwd=None, env=None, capture=False, check=True):
-    return subprocess.run(
-        list(args), cwd=cwd, env=env, text=True, check=check,
+    # Never embed command arguments in exceptions: WP-CLI user updates carry
+    # a freshly generated local admin password as an argument.
+    result = subprocess.run(
+        list(args), cwd=cwd, env=env, text=True, check=False,
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.PIPE if capture else None,
     )
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            "Import subprocess failed (exit code " + str(result.returncode) + ")"
+        )
+    return result
 
 
 def choose_prefix(tables):
@@ -278,7 +285,7 @@ def main():
     try:
         restore(args.site, args.zip, args.db)
         return 0
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, RuntimeError) as error:
         print("[error] Import failed: " + str(error), file=sys.stderr)
         print("[info] Any new incomplete site remains stopped and import-pending.",
               file=sys.stderr)
