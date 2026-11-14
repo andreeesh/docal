@@ -51,6 +51,33 @@ Nothing above is aspirational — see [Roadmap](#roadmap) for what's planned but
 
 ## From production to local
 
+### ZIP + SQL (experimental on the development branch)
+
+For developers with a standard WordPress ZIP plus a database dump, the new
+plugin-independent command creates a **new** site:
+
+```bash
+docal import mysite --zip ./site.zip --db ./database.sql.gz
+docal start mysite
+```
+
+The archive may contain full WordPress or only `wp-content`. Database dumps
+may be `.sql`, `.sql.gz` or gzip SQL. Existing sites cannot be overwritten.
+Docal preserves its own local `wp-config.php`, replaces serialized production
+URLs and generates a fresh local administrator password. The importer leaves
+WordPress stopped until you explicitly start it, so restored plugins do not
+run during database preparation.
+
+**Status:** this command is implemented on the feature branch, but has not
+passed a real Docker/MySQL end-to-end restore yet; it remains part of a draft
+PR. See [ZIP + SQL design](docs/import-zip-sql-design.md).
+
+### All-in-One WP Migration (.wpress), optional
+
+Existing `docal import-wpress` remains available for developers who already
+use that backup format. It can require a compatible Unlimited Extension,
+which Docal does not bundle or require for ZIP + SQL imports.
+
 ```text
 production-backup.wpress
           │
@@ -112,7 +139,10 @@ docal create mysite
 docal config set default_php 8.3
 docal config set sites_dir ~/projects
 
-# Import a production backup
+# Import ZIP + SQL into a new site (experimental branch)
+docal import newsite --zip site.zip --db database.sql.gz
+
+# Optional: restore a .wpress backup using your compatible migration plugins
 docal import-wpress mysite client-backup.wpress
 
 # Run WP-CLI
@@ -202,8 +232,8 @@ Nothing below exists yet — it's what's planned, in rough priority order.
 - `docal pull` — sync a site from production over SSH (db, and optionally uploads), with
   automatic URL replacement and cleanup, the same way `import-wpress` works today
 - Mailpit for local email capture, shared across all sites
-- A unified `docal import <site> <file>` dispatching on file type, wrapping today's
-  `import-wpress`/`import-db` instead of replacing them
+- Optional source auto-detection for future import adapters (the current ZIP + SQL
+  importer uses explicit --zip and --db arguments)
 - `docal open` / `docal admin` — open a site (or its wp-admin) in the Windows browser
 - `docal db shell` / `docal db reset` (with strong confirmation)
 - Snapshots (`docal snapshot <site> [label]`) for quick before/after database backups
