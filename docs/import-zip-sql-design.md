@@ -15,14 +15,16 @@ A full-site ZIP's `wp-config.php` is **never** installed over Docal's local
 configuration. Original database credentials and production secrets must not
 be carried into the local environment.
 
-## User-facing workflow (proposed)
+## User-facing workflow (implemented, pending live E2E validation)
 
 ```bash
 docal import mysite --zip ./site.zip --db ./database.sql.gz
 ```
 
 The command creates `mysite` when absent. It refuses to overwrite an existing
-site; updating an existing site requires a separately designed explicit opt-in.
+site. It leaves the imported site **stopped** until an explicit `docal start mysite`,
+so WordPress code and plugins are not served while the database is being restored.
+Updating existing sites requires a separately designed explicit opt-in.
 
 ## Implementation boundaries
 
@@ -44,8 +46,9 @@ site; updating an existing site requires a separately designed explicit opt-in.
 - FTP/SFTP and hosting-provider-specific APIs.
 
 The existing `import-db` and `import-wpress` commands remain available.
-This document is an implementation contract, **not** a claim that the proposed
-`docal import` command is already implemented.
+The importer is available on this development branch, but a full restoration
+with real MySQL and Docker has **not yet passed an end-to-end test**. Do not
+merge this PR or use it with an existing client site until that validation passes.
 
 
 ## Implemented: safe ZIP staging (not yet connected to Docal CLI)
@@ -108,14 +111,11 @@ contains zero tables. It then imports with the **scoped site database user**
 table before reporting success. A failed SQL import can leave a partially
 populated **new** database; the orchestrator must handle cleanup.
 
-**Integration blocker:** the current `docal create` workflow installs
-WordPress and populates the database immediately. The future
-`docal import` orchestrator must provision a new empty site database
-without running initial WordPress installation, then stage ZIP and SQL
-before invoking this loader. The loader is deliberately **not connected
-to the CLI** and must never replace the existing interactive
-`docal import-db` command. Its current tests use mocked Docker calls;
-no real MySQL restoration has been validated yet.
+The new import command now invokes the empty-site provisioner and guarded
+SQL loader without calling the standard `docal create` initialization.
+The existing interactive `docal import-db` command remains unchanged.
+The SQL loader tests use mocked Docker calls; real MySQL restoration is
+still pending.
 
 SQL dumps are **trusted user input** for development migration, not
 executable sandbox-safe data. MySQL permissions must remain limited
@@ -140,13 +140,47 @@ conflicting existing Docker container names or Compose volumes before
 running Docker. Normal `docal create`, `docal start` and `docal rebuild`
 are blocked for import-pending sites.
 
-This remains **internal**, not a published command. Do not point it at
-client sites or remove the pending marker manually. The future orchestrator
-must stage and verify ZIP/SQL, run the import, finalize URLs and local admin
-access, and remove the pending marker **only after successful checks**.
+This preparation mode remains **internal**, used by the new `docal import`
+CLI. Do not point it at client sites or remove the pending marker manually.
+The import orchestrator stages ZIP/SQL, normalizes URLs and local admin access,
+and removes the pending marker **only after successful checks**.
 Failure cleanup must target exclusively resources created by the new
 import operation, never existing sites or shared proxy resources.
 
 The tests use an offline minimal WordPress Git fixture and mocked Docker
 responses. An actual MySQL container and real restored WordPress site have
 not yet been tested.
+
+## Implemented: end-to-end orchestration (awaiting real Docker validation)
+
+The CLI entrypoint now accepts:
+
+```bash
+docal import mysite --zip ./wordpress-site.zip --db ./database.sql.gz
+docal start mysite
+```
+
+The first command rejects an existing site; validates and stages both input
+files before provisioning; creates a dedicated empty MySQL database; copies
+WordPress files **without replacing the generated local wp-config.php**;
+imports SQL using the scoped database user; detects a unique root WordPress
+table prefix; and invokes WP-CLI in one-off containers without starting the
+web service. It temporarily quarantines mu-plugins and database/cache
+drop-ins during bootstrap, uses WordPress-aware serialized URL replacement,
+updates local home/siteurl, and generates a fresh administrator password.
+It verifies WordPress installation and the saved URLs before clearing the
+import-pending marker. Existing sites are never valid import destinations.
+
+The import command deliberately leaves the WordPress web service stopped.
+A separate `docal start mysite` is necessary to run the restored PHP and
+plugins. The generated local configuration disables WP-Cron and WordPress's
+HTTP API access to external services, but this **does not** prohibit all
+outbound activity (e.g. raw PHP sockets/cURL or direct plugin SMTP).
+Only start backups that you trust and consider additional container egress
+controls for sensitive client data.
+
+If failure occurs after provisioning, the new site may contain a partial
+database and retains its import-pending marker; the operator must diagnose
+and explicitly delete/recreate the disposable site before retrying. The
+source backups remain unchanged. The new workflow has unit and mocked-Docker
+tests, but **no real end-to-end Docker/MySQL restoration has been confirmed**.
