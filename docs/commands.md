@@ -81,6 +81,32 @@ docal wp myblog user list
 docal wp myblog theme install twentytwentyfour --activate
 ```
 
+### `docal import <new-site> --zip ZIP --db SQL` (experimental)
+
+Creates a **new** WordPress site from a standard ZIP and SQL database dump.
+The ZIP can contain WordPress core plus `wp-content`, or `wp-content`
+alone. The SQL dump can be `.sql`, `.sql.gz`, or a gzip-compressed
+`.gz` SQL file. It never overwrites an existing Docal site.
+
+```bash
+docal import myblog --zip ./site.zip --db ./backup.sql.gz
+docal start myblog
+```
+
+Input files are validated and staged before creating a site. Docal then
+imports into a new, empty MySQL database, preserves its generated
+`wp-config.php`, detects the table prefix, updates serialized production
+URLs, and generates a fresh local administrator password. Imported WordPress
+remains stopped until `docal start` is run explicitly.
+
+Failed imports can leave an incomplete, import-pending **new** site for
+diagnosis. The standard `docal start` command refuses to start such a
+site; manually remove it with `docal delete` before retrying.
+
+This command is currently part of a draft feature PR. The unit tests
+and simulated Docker tests pass, but a real end-to-end restore is not
+yet validated. See [ZIP + SQL design](import-zip-sql-design.md).
+
 ### `docal import-wpress <site> [file]`
 
 Restores an All-in-One WP Migration (`.wpress`) backup into an **already-created** site. See
