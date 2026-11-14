@@ -44,6 +44,13 @@ fi
 after="$(sha256sum "${site}/.env" "${site}/wordpress/wp-config.php")"
 [[ "${before}" == "${after}" ]]
 
+# Normal creation cannot convert an unfinished import into a regular site.
+if bash "${ROOT}/scripts/setup-wordpress.sh" --non-interactive --skip-docker > "${work}/normal-setup.log" 2>&1; then
+  echo "FAIL: normal creation over import-pending site accepted" >&2
+  exit 1
+fi
+[[ "${before}" == "$(sha256sum "${site}/.env" "${site}/wordpress/wp-config.php")" ]]
+
 # The import mode refuses implicit defaults and invalid site names.
 if env -u SITE_NAME bash "${ROOT}/scripts/setup-wordpress.sh" --prepare-import --non-interactive --skip-docker >/dev/null 2>&1; then
   echo "FAIL: missing site name accepted" >&2
