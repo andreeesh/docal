@@ -121,3 +121,32 @@ SQL dumps are **trusted user input** for development migration, not
 executable sandbox-safe data. MySQL permissions must remain limited
 to the isolated site's database and no dump should be replayed into
 another site's schema.
+
+
+## Implemented: prepare an empty import site
+
+`scripts/setup-wordpress.sh` now accepts an **internal** combination of
+`--prepare-import --non-interactive`, with an explicit `SITE_NAME` (a
+lowercase Docal slug). This path reuses normal site templates, core checkout,
+local `wp-config.php` generation and credentials, but does **not** run
+`wp-init`, start WordPress/PHP, register a TLS certificate or start Traefik.
+It creates an import-pending marker and starts only the new MySQL service,
+checking that the dedicated database is accessible and contains zero tables.
+
+With `--skip-docker` it writes configuration and the import-pending marker
+without starting MySQL; this supports isolated unit tests. It cannot be used
+on a directory that already exists (including symlinks), and refuses
+conflicting existing Docker container names or Compose volumes before
+running Docker. Normal `docal create`, `docal start` and `docal rebuild`
+are blocked for import-pending sites.
+
+This remains **internal**, not a published command. Do not point it at
+client sites or remove the pending marker manually. The future orchestrator
+must stage and verify ZIP/SQL, run the import, finalize URLs and local admin
+access, and remove the pending marker **only after successful checks**.
+Failure cleanup must target exclusively resources created by the new
+import operation, never existing sites or shared proxy resources.
+
+The tests use an offline minimal WordPress Git fixture and mocked Docker
+responses. An actual MySQL container and real restored WordPress site have
+not yet been tested.
