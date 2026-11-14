@@ -42,7 +42,7 @@ def validate(archive: pathlib.Path) -> str:
         if not files:
             raise ValueError("ZIP contains no files")
         roots = {p.split("/")[0] for p in files}
-        if len(roots) == 1:
+        if len(roots) == 1 and next(iter(roots)) not in {"wp-content", "wp-admin", "wp-includes"}:
             root = next(iter(roots))
             prefix = root + "/"
             files = {p[len(prefix):] for p in files if p.startswith(prefix)}
