@@ -241,11 +241,15 @@ def restore(name, archive, sqlfile):
         with no_bootstrap_plugins(site):
             if wp(site, "core", "is-installed", check=False).returncode:
                 raise ValueError("Imported WordPress database is invalid")
+            replaced = set()
             for original in originals:
-                if original != new_url:
-                    wp(site, "search-replace", original, new_url,
-                       "--all-tables-with-prefix", "--recurse-objects",
-                       "--skip-columns=guid", "--report-changed-only")
+                variants = (original, "http://" + original[8:]) if original.startswith("https://") else (original, "https://" + original[7:])
+                for candidate in variants:
+                    if candidate not in replaced and candidate != new_url:
+                        wp(site, "search-replace", candidate, new_url,
+                           "--all-tables-with-prefix", "--recurse-objects",
+                           "--skip-columns=guid", "--report-changed-only")
+                        replaced.add(candidate)
             for key in ("home", "siteurl"):
                 wp(site, "option", "update", key, new_url)
             admin = conf["ADMIN_USER"]
