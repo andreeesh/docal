@@ -548,6 +548,18 @@ cmd_import_db() {
   ok "Import complete."
 }
 
+# ── new-site ZIP + SQL import ────────────────────────────────────────────────
+cmd_import() {
+  # Only a new site can be restored; WordPress remains stopped after import.
+  export SITE_DOMAIN="${SITE_DOMAIN:-$(config_get default_domain)}"
+  export PHP_VERSION="${PHP_VERSION:-$(config_get default_php)}"
+  export MYSQL_VERSION="${MYSQL_VERSION:-$(config_get default_mysql)}"
+  export ADMIN_EMAIL="${ADMIN_EMAIL:-$(config_get admin_email)}"
+  export ADMIN_USER="${ADMIN_USER:-$(config_get admin_user)}"
+  export MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-$(config_get default_upload_limit)}"
+  python3 "${SCRIPTS_DIR}/import-wordpress-zip-sql.py" "$@"
+}
+
 # ── import-wpress ─────────────────────────────────────────────────────────────
 cmd_import_wpress() {
   require_site "${1:-}"
@@ -1037,6 +1049,7 @@ cmd_help() {
   echo ""
   echo -e "  ${BOLD}WordPress${NC}"
   echo "    wp      <site> <command>         Run a WP-CLI command"
+  echo "    import <new-site> --zip ZIP --db SQL  Import ZIP + SQL into a NEW stopped WordPress site"
   echo "    import-wpress <site> [file]      Restore an All-in-One (.wpress) backup into an existing site"
   echo "    replace-url <site> <old> <new>   Replace URLs safely across the database"
   echo "    fix-rewrites <site>              Repair permalinks/REST API without rebuild"
@@ -1093,6 +1106,7 @@ cmd_help() {
   echo "    docal stop myshop"
   echo "    docal export-db myshop"
   echo "    docal import-db myshop"
+  echo "    docal import myshop --zip site.zip --db database.sql.gz"
   echo "    docal import-wpress myshop                # picks from wpress/*.wpress"
   echo "    docal import-wpress myshop backup.wpress"
   echo "    docal lint myshop"
@@ -1125,6 +1139,7 @@ case "${COMMAND}" in
   replace-url|ru)     cmd_replace_url "$@" ;;
   export-db|edb)      cmd_export_db "$@" ;;
   import-db|idb)      cmd_import_db "$@" ;;
+  import)             cmd_import "$@" ;;
   import-wpress|iw)   cmd_import_wpress "$@" ;;
   lint)               cmd_lint "$@" ;;
   clean-certs|cc)     cmd_clean_certs ;;
