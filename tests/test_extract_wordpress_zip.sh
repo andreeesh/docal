@@ -92,5 +92,37 @@ with tempfile.TemporaryDirectory() as tmp:
         raise AssertionError("CRC failure did not abort extraction")
     assert (destination / "index.php").read_text() == "index"
 
+    # Resource limit and ambiguous archive-member checks run before creating output.
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("wp-content/zeros.bin", bytes(2_000_000))
+    try:
+        module.extract(archive, root / "zip-bomb")
+    except ValueError:
+        assert not (root / "zip-bomb").exists()
+    else:
+        raise AssertionError("Excessive ZIP compression ratio was accepted")
+
+    write_zip([
+        ("wp-content/Plugin.php", "A"),
+        ("wp-content/plugin.php", "B"),
+    ])
+    try:
+        module.extract(archive, root / "case-collision")
+    except ValueError:
+        assert not (root / "case-collision").exists()
+    else:
+        raise AssertionError("Case-colliding ZIP entries were accepted")
+
+    write_zip([
+        ("wp-content/parent", "file"),
+        ("wp-content/parent/child", "bad"),
+    ])
+    try:
+        module.extract(archive, root / "file-dir-collision")
+    except ValueError:
+        assert not (root / "file-dir-collision").exists()
+    else:
+        raise AssertionError("File/directory collision was accepted")
+
 print("WordPress ZIP extraction tests passed")
 PY
