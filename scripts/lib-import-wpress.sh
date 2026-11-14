@@ -73,8 +73,13 @@ import_wpress_backup() {
   container_name="docal-${SITE_SLUG}-wp"
 
   if [[ "${INSTALL_AIOWP_MIGRATION}" -ne 1 ]]; then
-    echo "[info] Installing All-in-One WP Migration (required for restore)..."
-    docker compose exec -T wordpress wp plugin install all-in-one-wp-migration --activate --force --allow-root
+    if ! docker compose exec -T wordpress wp plugin is-installed all-in-one-wp-migration --allow-root >/dev/null 2>&1; then
+      echo "[info] Installing All-in-One WP Migration (required for restore)..."
+      docker compose exec -T wordpress wp plugin install all-in-one-wp-migration --activate --force --allow-root
+    elif ! docker compose exec -T wordpress wp plugin is-active all-in-one-wp-migration --allow-root >/dev/null 2>&1; then
+      echo "[info] Activating All-in-One WP Migration..."
+      docker compose exec -T wordpress wp plugin activate all-in-one-wp-migration --allow-root
+    fi
     docker compose exec -T wordpress chown -R www-data:www-data /var/www/html/wp-content
   fi
 
