@@ -107,6 +107,28 @@ This command is currently part of a draft feature PR. The unit tests
 and simulated Docker tests pass, but a real end-to-end restore is not
 yet validated. See [ZIP + SQL design](import-zip-sql-design.md).
 
+### `docal pull <new-site> --ssh ALIAS --path REMOTE_PATH [--dry-run]` (experimental)
+
+Clones a remote site's `wp-content` and database to a **new** local Docal
+site using a host alias configured in `~/.ssh/config`.
+
+```bash
+docal pull mysite --ssh prod-alias --path /var/www/html --dry-run
+docal pull mysite --ssh prod-alias --path /var/www/html
+docal start mysite
+```
+
+`--dry-run` verifies the remote WP-CLI table prefix and prerequisites,
+without transferring data or starting Docker. Actual transfer uses
+read-only rsync (excluding common caches/backups and symlinks) plus a
+streamed WP-CLI SQL export. The existing ZIP + SQL importer handles
+normalization and creates the local site, which remains stopped.
+
+Requires remote `rsync` and `wp`, local key-based SSH, a trusted host key,
+and an absolute remote WordPress path. No remote credentials are stored.
+See [SSH import](import-ssh.md) for scope, consistency limits and safety
+considerations. Real remote end-to-end tests are still pending.
+
 ### `docal import-wpress <site> [file]`
 
 Restores an All-in-One WP Migration (`.wpress`) backup into an **already-created** site. See
