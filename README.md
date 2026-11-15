@@ -72,6 +72,22 @@ run during database preparation.
 passed a real Docker/MySQL end-to-end restore yet; it remains part of a draft
 PR. See [ZIP + SQL design](docs/import-zip-sql-design.md).
 
+### SSH import (experimental on the development branch)
+
+With an SSH alias, remote WP-CLI and rsync access, Docal can collect
+`wp-content` and a database dump without creating a backup file remotely:
+
+```bash
+docal pull mysite --ssh production-alias --path /var/www/html --dry-run
+docal pull mysite --ssh production-alias --path /var/www/html
+docal start mysite
+```
+
+The remote acquisition is designed to be read-only. The new local site
+uses Docal's existing ZIP + SQL importer; no commercial plugin is needed.
+A real SSH E2E test is still pending. See
+[SSH import instructions](docs/import-ssh.md).
+
 ### All-in-One WP Migration (.wpress), optional
 
 Existing `docal import-wpress` remains available for developers who already
@@ -141,6 +157,9 @@ docal config set sites_dir ~/projects
 
 # Import ZIP + SQL into a new site (experimental branch)
 docal import newsite --zip site.zip --db database.sql.gz
+
+# Import from SSH (experimental branch; requires remote WP-CLI + rsync)
+docal pull remote-copy --ssh prod-alias --path /var/www/html --dry-run
 
 # Optional: restore a .wpress backup using your compatible migration plugins
 docal import-wpress mysite client-backup.wpress
@@ -229,8 +248,6 @@ generality is a real advantage Docal doesn't try to match.
 Nothing below exists yet — it's what's planned, in rough priority order.
 
 **Planned**
-- `docal pull` — sync a site from production over SSH (db, and optionally uploads), with
-  automatic URL replacement and cleanup, the same way `import-wpress` works today
 - Mailpit for local email capture, shared across all sites
 - Optional source auto-detection for future import adapters (the current ZIP + SQL
   importer uses explicit --zip and --db arguments)
