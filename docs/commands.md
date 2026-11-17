@@ -214,8 +214,11 @@ The Mailpit web UI is exposed only to `127.0.0.1:8025`. SMTP uses
 SMTP port 1025 is not published to the host. Normal new Docal WordPress
 images use `msmtp-mta` for default PHP `mail()`/`wp_mail()`, whereas
 Safe Start continues to disable sendmail and outbound network access.
-Existing images and SMTP plugins are not silently changed. See
-[Mailpit setup](mailpit.md) for testing and security limits.
+Existing images are not silently changed. Opt in to WordPress-level
+capture with `docal mail enable <site>` and remove it with
+`docal mail disable <site>`, without rebuilding WordPress. These
+commands fail closed for unexpected existing MU-plugin files and symlinks.
+See [Mailpit setup](mailpit.md) for testing and security limits.
 
 
 ### `docal exec <site> [command]`
