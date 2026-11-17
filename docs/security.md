@@ -44,6 +44,12 @@ private addresses, access tokens and password-reset URLs. Treat the UI
 and the workstation as sensitive; never expose the inbox through a
 reverse proxy, LAN port, Cloudflare Tunnel or a browser-sharing service.
 
+Existing WordPress sites are not modified automatically. The explicit
+`docal mail enable <site>` command creates a single Docal-owned
+`mu-plugins/docal-mailpit-capture.php` file to redirect standard WordPress
+PHPMailer messages; `docal mail disable <site>` removes only the original
+unmodified file. It does not alter the database or rebuild containers.
+
 Mailpit cannot stop a custom SMTP plugin or PHP code from contacting an
 external service directly. The Safe Start isolated preview deliberately
 overrides PHP sendmail with `/bin/false` and does not join Mailpit's
