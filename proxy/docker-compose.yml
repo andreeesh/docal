@@ -30,6 +30,22 @@ services:
     networks:
       - docal-proxy
 
+  # Shared SMTP sink for LOCAL development, never a delivery relay.
+  # The SMTP port (1025) is reachable only by containers on docal-proxy.
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    container_name: docal-mailpit
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_MAX_AGE: "7d"
+      MP_DISABLE_VERSION_CHECK: "true"
+    ports:
+      - "127.0.0.1:8025:8025"
+    labels:
+      - traefik.enable=false
+    networks:
+      - docal-proxy
 networks:
   docal-proxy:
     external: true
