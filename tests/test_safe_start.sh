@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory() as temp:
     old_which, old_probe = s.shutil.which, s.probe_network
     try:
         s.invoke = fake_invoke
-        s.resource_exists = lambda *_args: False
+        s.resource_exists = lambda kind, _name: kind == "image"
         s.shutil.which = lambda _name: "/usr/bin/rsync"
         s.probe_network = lambda *_args: None
         s.safe_start(site, proxy, 9443)
