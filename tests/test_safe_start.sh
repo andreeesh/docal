@@ -143,7 +143,7 @@ with tempfile.TemporaryDirectory() as temp:
         db = compose["services"]["safe-db"]
         assert db["image"] == "mysql:8"
         assert db["networks"] == ["docal-safe-internal"]
-        assert db["ports"] if False else "ports" not in db
+        assert "ports" not in db
         assert db["environment"]["MYSQL_DATABASE"] == "wpdb"
         assert db["environment"]["MYSQL_USER"] == "wpuser"
         assert "db-socket:/var/run/mysqld" not in compose["services"]["safe-web"]["volumes"]
@@ -184,6 +184,36 @@ with tempfile.TemporaryDirectory() as temp:
         assert not created_networks
         assert not created_volumes
         assert (site / "wordpress/wp-config.php").read_bytes() == original_config
+
+        # The source DB export can fail after disposable DB provisioning:
+        # rollback must delete only the owned preview volumes and networks.
+        s.probe_network = lambda *_args: None
+        commands.clear()
+        def failed_copy(*_args):
+            raise RuntimeError("Local mysqldump failed")
+        s.stream_local_database = failed_copy
+        try:
+            s.safe_start(site, proxy, 9443)
+        except RuntimeError as e:
+            assert "mysqldump failed" in str(e)
+        else:
+            raise AssertionError("Database cloning failure did not abort preview")
+        assert not runtime.exists()
+        assert not created_networks and not created_volumes
+        assert not any("safe-tls" in command and "up" in command for command in commands)
+        s.stream_local_database = lambda *_args: clone_events.append("stream")
+
+        # A colliding globally named temporary database volume is refused.
+        s.resource_exists = lambda kind, name: (
+            kind == "volume" and name == "docal-safe-fixture-safe-db-data"
+        )
+        try:
+            s.safe_start(site, proxy, 9443)
+        except ValueError as e:
+            assert "already exists" in str(e)
+        else:
+            raise AssertionError("Disposable database volume collision ignored")
+        assert not runtime.exists()
 
         s.resource_exists = lambda kind, name: (
             kind == "container" and name.endswith("-safe-web")
