@@ -1,0 +1,101 @@
+name: Publish Docal Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version from VERSION (for example 0.3.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  checks: read
+
+concurrency:
+  group: publish-docal-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify requested release, main commit and required CI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Expected a stable semantic version such as 0.3.0' >&2
+            exit 1
+          fi
+          [[ "$RELEASE_VERSION" == "$(tr -d '[:space:]' < VERSION)" ]] || {
+            echo 'Requested version does not match VERSION' >&2
+            exit 1
+          }
+          TAG="v${RELEASE_VERSION}"
+          test -s "docs/releases/${TAG}.md"
+          git fetch --quiet origin main --tags
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$GITHUB_SHA" ]] || {
+            echo 'main changed since workflow was started; cancel and retry' >&2
+            exit 1
+          }
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite it' >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            [[ "$(git rev-parse "refs/tags/$TAG^{commit}")" == "$GITHUB_SHA" ]] || {
+              echo 'Existing tag does not refer to this exact main commit' >&2
+              exit 1
+            }
+            [[ "$(git cat-file -t "refs/tags/$TAG")" == tag ]] || {
+              echo 'Existing tag is lightweight; expecting an annotated tag' >&2
+              exit 1
+            }
+          fi
+          for job in tests shell-checks; do
+            result="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq ".check_runs[] | select(.name == \"$job\") | .conclusion" | sort -u)"
+            if [[ "$result" != success ]]; then
+              echo "Missing successful check $job on $GITHUB_SHA (found: $result)" >&2
+              exit 1
+            fi
+          done
+          echo "CI verified for $GITHUB_SHA; release $TAG is eligible"
+
+      - name: Create annotated tag on verified commit
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${RELEASE_VERSION}"
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$TAG" -m "Docal $TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          else
+            echo "Reusing existing annotated tag $TAG pointing at $GITHUB_SHA"
+          fi
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${RELEASE_VERSION}"
+          gh release create "$TAG" --verify-tag \
+            --title "Docal $TAG" \
+            --notes-file "docs/releases/$TAG.md"
+
