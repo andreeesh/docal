@@ -12,17 +12,24 @@ Docal is intended for **local development only**, not production hosting.
 
 Local-only bindings do **not** make a site safe to share publicly. A Cloudflare Tunnel or other forwarding mechanism can expose WordPress to external users. Before sharing a site, review its users, passwords, plugins, sensitive data and tunnel access controls. Never expose a production backup containing real customer data without appropriate safeguards.
 
-## Safe preview (experimental)
+## Safe preview for imported sites
 
-The opt-in `docal start mysite --safe` uses an internal Docker network
-and disposable plugin-free copy to reduce outbound activity. A preflight
-tests connectivity from the same network before site PHP runs. This is
-**not** a substitute for real WSL2 Docker verification. The experimental
-PR #7 extension streams the original local WordPress DB into a dedicated
-throwaway MySQL data volume, with its own socket mounted into WordPress.
-Theme PHP may mutate only that disposable database. The clone is a
-best-effort logical export, not an offsite backup. See
+The opt-in `docal start mysite --safe` uses an isolated Docker network,
+a local-only HTTPS proxy and a temporary WordPress copy without plugins,
+MU-plugins or common drop-ins. Its preflight checks block IPv4, IPv6 and
+external DNS access before site PHP is served. Original MySQL must already
+be running and healthy: Safe Start reads it with Docker inspections and
+`docker exec`, never by starting or reconnecting the container.
+
+The database is cloned using a local SQL pipe into **disposable MySQL data
+and socket volumes**. Browsing the preview can mutate the temporary clone
+but cannot write through the original local database socket. A validated
+synthetic WSL2 E2E confirmed this isolation. Treat local restored content as
+sensitive regardless: the local DB copy contains real data if a real site
+was imported, and theme PHP can still execute. Safe Start is not a substitute
+for tested backups, OS hardening or sandboxing untrusted code. See
 [safe preview details](safe-start.md).
+
 ## Reporting a vulnerability
 
 Docal has no automated update-notification mechanism or telemetry. For security-sensitive findings, contact the maintainer privately rather than publishing exploit details in a public issue.

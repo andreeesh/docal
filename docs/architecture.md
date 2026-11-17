@@ -11,6 +11,9 @@
 │   │   ├── lib-doctor.sh           # `docal doctor` checks
 │   │   ├── setup-wordpress.sh      # create / import wizard
 │   │   ├── lib-import-wpress.sh    # shared .wpress restore + finalize logic
+│   │   ├── import-wordpress-zip-sql.py # new-site importer
+│   │   ├── pull-wordpress-ssh.py   # read-only-designed SSH acquisition
+│   │   ├── safe-start.py          # disposable file + MySQL preview
 │   │   ├── start-proxy.sh
 │   │   ├── ensure-wp-rewrites.sh
 │   │   ├── fix-wp-permissions.sh
@@ -31,6 +34,8 @@
     ├── Dockerfile
     ├── uploads.ini
     ├── .env                        # per-site credentials and settings
+    ├── .docal-imported             # marker for imported sites (when applicable)
+    ├── .docal-safe-runtime/        # temporary preview; deleted by safe stop
     └── wordpress/                  # WordPress source
 ```
 
@@ -66,6 +71,26 @@ as `sites_dir` and saved to `~/.docal/config`, instead of silently starting a se
 MySQL connection uses a Unix socket (`/var/run/mysqld/mysqld.sock`, shared via a Docker volume)
 instead of TCP, which avoids `caching_sha2_password` authentication issues with MySQL 8.x from the
 bundled MariaDB client.
+
+## Import adapters and Safe Start
+
+- ZIP + SQL import stages inputs privately, creates only a **new**
+  site, restores a dedicated DB using a scoped account, and leaves
+  normal WordPress PHP stopped. It never replaces the local generated
+  `wp-config.php`.
+- SSH pull uses an explicit host alias/path and remote read-only-designed
+  WP-CLI/rsync acquisition before invoking the same local importer.
+  Source file collection and SQL export are not an atomic snapshot.
+- Safe Start copies WordPress files without plugins/MU-plugins or common
+  drop-ins, clones the healthy **existing local database** into two
+  disposable data/socket volumes, and runs only the preview services on
+  an internal Docker network. The HTTPS frontend publishes only on
+  loopback through a dedicated no-masquerade bridge. Source DB identity,
+  configuration, state and network memberships are checked throughout.
+  Safe Start never starts or reconciles source MySQL.
+- `docal stop <site>` removes an active safe preview's temporary
+  web/MySQL containers, networks and files. It leaves the original
+  local DB running. See [Safe preview](safe-start.md).
 
 ## Docker preflight
 

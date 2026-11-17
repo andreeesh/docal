@@ -1,4 +1,4 @@
-# Import a WordPress site over SSH (experimental)
+# Import a WordPress site over SSH
 
 Docal can acquire files and a database from a remote WordPress installation
 and feed them into its **existing, plugin-independent ZIP + SQL importer**.
@@ -43,9 +43,15 @@ Then create and import into a **new local site**:
 
     docal pull local-copy --ssh my-wp-production --path /var/www/html
 
-WordPress stays **stopped** after the import. Start it explicitly:
+WordPress stays **stopped** after the import. Inspect it first using the
+isolated preview with a disposable local database:
 
-    docal start local-copy
+    docal start local-copy --safe --port 8443
+    # https://local-copy.localhost:8443
+    docal stop local-copy
+
+Only use ordinary `docal start local-copy` after you deliberately decide
+to run the restored plugins on Docal's shared local proxy network.
 
 Never specify an already-existing local Docal site as the pull target.
 
@@ -58,9 +64,9 @@ collision, choose a *different new slug* rather than deleting or renaming
 the existing QA site's resources. The `--dry-run` mode intentionally
 does not require Docker and checks SSH prerequisites only.
 
-For a local web smoke test, reuse an already restored QA site instead of
-re-importing production data, and ensure the test web container is isolated
-from outbound network access before starting it.
+For repeated regression tests, use synthetic fixtures rather than
+re-importing production data. Safe Start isolates restored PHP on a
+dedicated Docker network with an outbound-egress preflight.
 
 ## Acquisition and import pipeline
 
@@ -106,9 +112,11 @@ Existing sites are never overwritten.
   but the resulting local installation contains a full DB/files copy.
   Use company/client authorization, protect the workstation and avoid
   unnecessary production data in tests.
-- Restored WordPress plugins can make outbound requests **after** docal start.
-  Docal's WordPress HTTP API blocking does not stop raw network calls.
-  Consider egress isolation during the first local run.
+- Restored WordPress plugins can make outbound requests with normal
+  `docal start`. Docal's WordPress HTTP API blocking does not stop raw
+  network calls. Inspect first with `--safe` (plugins excluded, dedicated
+  internal network, disposable database) and review plugin integrations
+  before opting into normal startup.
 - SSH aliases and paths are explicit to minimize complexity. FTP, SFTP-only
   access, cloud hosting APIs, bidirectional sync and remote file modification
   are intentionally out of scope.
@@ -148,6 +156,10 @@ entries; validate active post content and local text assets independently.
 
 ## Validation status
 
-The SSH adapter has mocked SSH/rsync tests in CI. A real SSH import has **not
-yet** been tested. Use a synthetic fixture or a specifically approved read-only
-server before release; do not merge until its E2E tests pass.
+The SSH adapter has mocked SSH/rsync regressions in CI. Its read-only
+acquisition path was exercised against an actual WordPress installation,
+followed by a local Docker/MySQL restore and isolated frontend/login tests.
+A successful test does **not** mean arbitrary remote shell hooks are proven
+side-effect-free, or that independently changing production files and SQL
+form an atomic snapshot. Use authorized remote access and preserve sensitive
+data carefully.

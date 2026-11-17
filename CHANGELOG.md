@@ -5,6 +5,41 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Plugin-independent WordPress ZIP + SQL new-site importer, with archive/SQL
+  validation, guarded database restore, local admin reset and serialized
+  URL normalization.
+- Read-only-designed SSH acquisition (`docal pull --ssh ... --path ...`)
+  with remote WP-CLI/rsync prerequisites and isolated local restoration.
+- Safe Start preview (`docal start <site> --safe`) using an isolated PHP
+  network, loopback-only HTTPS, plugin-free temporary file copy and a
+  **disposable MySQL clone** for browsing without changing the source
+  local database.
+
+### Security and reliability
+
+- Source MySQL container identity, config, health and network endpoints are
+  inspected before and throughout Safe Start. Safe Start does not start
+  or reconcile the original database container.
+- Guard against conflicting Docker container, volume and network names,
+  unsafe staging paths and failed/partial restores.
+- Tested SSH/local restore flows and the Safe Start disposable-DB workflow
+  end to end under WSL2/Docker Engine, using authorized/synthetic fixtures
+  as appropriate. CI covers the mocked preflight and failure paths.
+
+### Documentation
+
+- Updated README, import, Safe Start, security and command guides to match
+  current implementation; added release acceptance checklist.
+
+**Release note:** This section describes changes since `0.2.0` and does
+not constitute a published release or tag. Update `VERSION`, finalize the
+release heading and create a signed or annotated Git tag only after
+acceptance criteria have been reviewed on the release commit.
+
 ## [0.2.0]
 
 ### Added
