@@ -14,11 +14,14 @@ is started. It intentionally leaves the normal Docal proxy untouched.
 """
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import shlex
+import socket
 import subprocess
 import sys
 
@@ -102,6 +105,7 @@ def names(slug):
         "web": "docal-" + slug + "-safe-web",
         "tls": "docal-" + slug + "-safe-tls",
         "db": "docal-" + slug + "-safe-db",
+        "source_db": "docal-" + slug + "-db",
         "db_data": "docal-" + slug + "-safe-db-data",
         "db_socket": "docal-" + slug + "-safe-db-socket",
         "image": "docal/wordpress-" + slug + ":latest",
@@ -126,6 +130,15 @@ def assert_available(slug):
             )
 
 
+def assert_port_available(port):
+    """Reject an occupied loopback port before creating or starting preview resources."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        try:
+            listener.bind(("127.0.0.1", port))
+        except OSError as exc:
+            raise ValueError("Safe preview loopback port is already occupied") from exc
+
+
 def local_mysql_image(site_dir):
     """Resolve the site's existing MySQL image without launching any service."""
     result = invoke(["docker", "compose", "config", "--format", "json"],
@@ -143,8 +156,11 @@ def db_credentials(conf):
     values = [conf.get(key, "") for key in ("DB_NAME", "DB_USER", "DB_PASSWORD")]
     if (not all(isinstance(val, str) for val in values)
             or not all(values)
-            or not re.fullmatch(r"[A-Za-z0-9_]+", values[0])
-            or not re.fullmatch(r"[A-Za-z0-9_]+", values[1])):
+            # Docal derives both values from the site slug, which may contain
+            # hyphens. They are passed as individual argv values, never
+            # interpolated into SQL, so accept that generated identifier form.
+            or not re.fullmatch(r"[A-Za-z0-9_-]+", values[0])
+            or not re.fullmatch(r"[A-Za-z0-9_-]+", values[1])):
         raise ValueError("Invalid local database credentials for safe preview")
     return values
 
@@ -257,7 +273,7 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime, mysql_image=None):
         mysql_image = local_mysql_image(site_dir)
     db_name, db_user, db_password = db_credentials(conf)
     # Docker Compose interpolates $ in values, so escape it in private JSON.
-    compose_password = db_password.replace("$", "$")
+    compose_password = db_password.replace("$", "$$")
     # All paths are fully qualified and serialized by json.dumps; JSON is
     # accepted YAML, so Compose can read this without a YAML dependency.
     override = {
@@ -283,8 +299,8 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime, mysql_image=None):
                     # Double $ prevents host-side Compose interpolation.
                     "test": [
                         "CMD-SHELL",
-                        'MYSQL_PWD="${MYSQL_PASSWORD}" mysql --protocol=socket '
-                        '-u "${MYSQL_USER}" "${MYSQL_DATABASE}" '
+                        'MYSQL_PWD="$${MYSQL_PASSWORD}" mysql --protocol=socket '
+                        '-u "$${MYSQL_USER}" "$${MYSQL_DATABASE}" '
                         '-e "SELECT 1" >/dev/null 2>&1',
                     ],
                     "interval": "5s",
@@ -393,6 +409,127 @@ def network_metadata(name):
     return json.loads(details)
 
 
+def inspect_container(reference, *, check=True):
+    result = invoke(
+        ["docker", "container", "inspect", reference, "--format", "{{json .}}"],
+        capture=True, check=check,
+    )
+    if result.returncode != 0:
+        return None
+    return json.loads(result.stdout)
+
+
+def source_network_snapshot(container):
+    """Capture original DB endpoints and every peer connected to those networks."""
+    attachments = container.get("NetworkSettings", {}).get("Networks") or {}
+    if not attachments:
+        raise ValueError("Original MySQL container has no Docker network attachments")
+    snapshot = {}
+    for network_name, endpoint in sorted(attachments.items()):
+        network = network_metadata(network_name)
+        members = network.get("Containers") or {}
+        if container.get("Id") not in members:
+            raise RuntimeError("Original MySQL network membership is inconsistent")
+        snapshot[network_name] = {
+            "id": network.get("Id"),
+            "driver": network.get("Driver"),
+            "scope": network.get("Scope"),
+            "internal": network.get("Internal"),
+            "enable_ipv6": network.get("EnableIPv6"),
+            "options": network.get("Options") or {},
+            "ipam": (network.get("IPAM") or {}).get("Config") or [],
+            "connections": members,
+            "source_endpoint": {
+                key: endpoint.get(key)
+                for key in (
+                    "NetworkID", "EndpointID", "Gateway", "IPAddress",
+                    "IPPrefixLen", "IPv6Gateway", "GlobalIPv6Address",
+                    "GlobalIPv6PrefixLen", "MacAddress", "Aliases", "DriverOpts",
+                )
+            },
+        }
+    return snapshot
+
+
+def source_container_snapshot(container):
+    state = container.get("State") or {}
+    config = container.get("Config") or {}
+    host_config = container.get("HostConfig") or {}
+    # Docker does not guarantee the order of the live Mounts array. Keep the
+    # configuration fingerprint stable across inspections by sorting mounts
+    # by their stable identity before hashing them.
+    mounts = sorted(
+        container.get("Mounts") or [],
+        key=lambda mount: (
+            str(mount.get("Destination", "")),
+            str(mount.get("Type", "")),
+            str(mount.get("Name", "")),
+            str(mount.get("Source", "")),
+        ),
+    )
+    immutable_config = json.dumps(
+        {"Config": config, "HostConfig": host_config, "Mounts": mounts},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "id": container.get("Id"),
+        "name": container.get("Name"),
+        "config_hash": hashlib.sha256(immutable_config).hexdigest(),
+        "status": state.get("Status"),
+        "running": state.get("Running"),
+        "started_at": state.get("StartedAt"),
+        "restart_count": container.get("RestartCount"),
+        "health": (state.get("Health") or {}).get("Status"),
+        "networks": source_network_snapshot(container),
+    }
+
+
+def original_database_guard(site_dir, conf, expected_image):
+    """Identify an already healthy source DB and snapshot its state/config/networks."""
+    name = names(conf["SITE_SLUG"])["source_db"]
+    container = inspect_container(name, check=False)
+    start_hint = "(cd " + shlex.quote(str(site_dir)) + " && docker compose start db)"
+    if container is None:
+        raise ValueError(
+            "Original MySQL container " + name + " is missing; create/start it outside "
+            "Safe Start with: " + start_hint
+        )
+    labels = (container.get("Config") or {}).get("Labels") or {}
+    if (container.get("Name", "").lstrip("/") != name
+            or labels.get("com.docker.compose.service") != "db"
+            or labels.get("com.docker.compose.project") != conf["SITE_SLUG"]):
+        raise ValueError("Original MySQL container identity does not match this Docal site")
+    if (container.get("Config") or {}).get("Image") != expected_image:
+        raise ValueError("Original MySQL container image does not match the site configuration")
+    state = container.get("State") or {}
+    if (not state.get("Running") or state.get("Status") != "running"
+            or (state.get("Health") or {}).get("Status") != "healthy"):
+        raise ValueError(
+            "Original MySQL container " + name + " must already be running and healthy; "
+            "start it outside Safe Start with: " + start_hint
+        )
+    return source_container_snapshot(container)
+
+
+def verify_original_database(guard):
+    """Fail if the source container, its config/state, or any attached network changed."""
+    container_id = guard["id"]
+    container = inspect_container(container_id, check=False)
+    if container is None:
+        raise RuntimeError("Original MySQL container disappeared during Safe Start")
+    current = source_container_snapshot(container)
+    for field in ("id", "name", "config_hash", "status", "running",
+                  "started_at", "restart_count", "health"):
+        if current[field] != guard[field]:
+            raise RuntimeError("Original MySQL container " + field + " changed during Safe Start")
+    if current["networks"] != guard["networks"]:
+        raise RuntimeError("Original MySQL network connections changed during Safe Start")
+
+
+def source_table_count(conf, source_container):
+    return local_table_count(conf, source_container=source_container)
+
+
 def assert_owned_network(name, slug):
     data = network_metadata(name)
     if (data.get("Labels") or {}).get("docal.safe.site") != slug:
@@ -419,18 +556,19 @@ def assert_owned_volume(name, slug):
     return data
 
 
-def local_table_count(site_dir, conf, safe_container=None):
+def local_table_count(conf, *, source_container=None, safe_container=None):
+    if bool(source_container) == bool(safe_container):
+        raise ValueError("Specify exactly one MySQL container for table verification")
     db_name, db_user, db_password = db_credentials(conf)
-    prefix = (["docker", "exec", "-e", "MYSQL_PWD", safe_container]
-              if safe_container else
-              ["docker", "compose", "exec", "-T", "-e", "MYSQL_PWD", "db"])
+    container = safe_container or source_container
     env = dict(os.environ, MYSQL_PWD=db_password)
-    command = prefix + [
+    command = [
+        "docker", "exec", "-e", "MYSQL_PWD", container,
         "mysql", "--batch", "--skip-column-names", "-u", db_user,
         db_name, "-e", "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()",
     ]
     result = subprocess.run(
-        command, cwd=None if safe_container else site_dir, env=env,
+        command, env=env,
         text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
     )
     if result.returncode != 0 or not result.stdout.strip().isdigit():
@@ -438,7 +576,7 @@ def local_table_count(site_dir, conf, safe_container=None):
     return int(result.stdout.strip())
 
 
-def stream_local_database(site_dir, conf, safe_container):
+def stream_local_database(conf, source_container, safe_container, source_guard=None):
     """Stream a consistent best-effort LOCAL mysqldump into disposable MySQL.
 
     No SQL dump file or customer data is printed or stored in local staging.
@@ -448,7 +586,7 @@ def stream_local_database(site_dir, conf, safe_container):
     db_name, db_user, db_password = db_credentials(conf)
     env = dict(os.environ, MYSQL_PWD=db_password)
     source_args = [
-        "docker", "compose", "exec", "-T", "-e", "MYSQL_PWD", "db",
+        "docker", "exec", "-e", "MYSQL_PWD", source_container,
         "mysqldump", "--single-transaction", "--quick", "--skip-lock-tables",
         "--no-tablespaces", "-u", db_user, db_name,
     ]
@@ -458,7 +596,7 @@ def stream_local_database(site_dir, conf, safe_container):
     ]
     with tempfile.TemporaryFile() as source_err, tempfile.TemporaryFile() as sink_err:
         source = subprocess.Popen(
-            source_args, cwd=site_dir, env=env, stdout=subprocess.PIPE,
+            source_args, env=env, stdout=subprocess.PIPE,
             stderr=source_err,
         )
         sink = None
@@ -471,9 +609,6 @@ def stream_local_database(site_dir, conf, safe_container):
             source.stdout.close()
             source_rc = source.wait()
             sink_rc = sink.wait()
-            if source_rc != 0 or sink_rc != 0:
-                raise RuntimeError("Disposable SQL copy failed: source=" +
-                                   str(source_rc) + ", sink=" + str(sink_rc))
         except BaseException:
             if source.poll() is None:
                 source.kill()
@@ -483,6 +618,11 @@ def stream_local_database(site_dir, conf, safe_container):
                     sink.kill()
                 sink.wait()
             raise
+        if source_guard is not None:
+            verify_original_database(source_guard)
+        if source_rc != 0 or sink_rc != 0:
+            raise RuntimeError("Disposable SQL copy failed: source=" +
+                               str(source_rc) + ", sink=" + str(sink_rc))
 
 
 def cleanup_owned_volumes(obj, slug, *, strict):
@@ -512,18 +652,23 @@ def probe_network(image, network, resolv):
 def safe_start(site_dir, proxy_dir, port):
     conf = read_site(site_dir)
     slug = conf["SITE_SLUG"]
+    if not isinstance(port, int) or not 1 <= port <= MAX_PORT:
+        raise ValueError("Invalid local HTTPS port")
+    assert_port_available(port)
     runtime = site_dir / SAFE_DIR_NAME
     if runtime.exists() or runtime.is_symlink():
         raise ValueError("Safe preview already prepared; use docal stop to clean it")
     ensure_no_normal_web(site_dir)
     assert_available(slug)
+    mysql_image = local_mysql_image(site_dir)
+    source_guard = original_database_guard(site_dir, conf, mysql_image)
     if not shutil.which("rsync"):
         raise ValueError("rsync is required for disposable safe preview copies")
     runtime.mkdir(mode=0o700)
     obj = names(slug)
     networks_created = []
     try:
-        prepare_runtime(site_dir, proxy_dir, port, runtime)
+        prepare_runtime(site_dir, proxy_dir, port, runtime, mysql_image=mysql_image)
         # Refuse to build arbitrary site Dockerfiles while entering safe mode.
         # Import and standard create normally build this image already.
         if not resource_exists("image", obj["image"]):
@@ -542,6 +687,7 @@ def safe_start(site_dir, proxy_dir, port):
             obj["edge_network"],
         ])
         networks_created.append(obj["edge_network"])
+        verify_original_database(source_guard)
         edge = assert_owned_network(obj["edge_network"], slug)
         edge_options = edge.get("Options") or {}
         if (edge.get("Driver") != "bridge" or edge.get("Internal")
@@ -550,12 +696,11 @@ def safe_start(site_dir, proxy_dir, port):
             raise RuntimeError("Dedicated TLS edge network is not isolated and empty")
         print("[info] Testing IPv4, IPv6 and DNS egress before starting PHP...", flush=True)
         probe_network(obj["image"], obj["network"], runtime / "resolv.conf")
-        # Source DB is accessed only by an ordinary local CLI export.
-        # It is never attached to WordPress's dedicated safe network.
-        invoke(["docker", "compose", "up", "-d", "db"], cwd=site_dir)
+        verify_original_database(source_guard)
         args = compose_args(site_dir, runtime)
         print("[info] Starting disposable MySQL volume and socket...", flush=True)
         invoke([*args, "up", "-d", "--wait", "safe-db"], cwd=site_dir)
+        verify_original_database(source_guard)
         # Confirm Compose created our explicitly labelled private volumes;
         # without proof of ownership, never transfer customer data into them.
         for key in ("db_data", "db_socket"):
@@ -563,23 +708,31 @@ def safe_start(site_dir, proxy_dir, port):
                 raise RuntimeError("Disposable MySQL volume was not created")
             assert_owned_volume(obj[key], slug)
         print("[info] Streaming the LOCAL database into disposable MySQL...", flush=True)
-        source_tables = local_table_count(site_dir, conf)
+        source_tables = source_table_count(conf, source_guard["id"])
+        verify_original_database(source_guard)
         if source_tables == 0:
             raise RuntimeError("Cannot preview an empty local WordPress database")
-        stream_local_database(site_dir, conf, obj["db"])
-        copied_tables = local_table_count(site_dir, conf, obj["db"])
+        stream_local_database(conf, source_guard["id"], obj["db"], source_guard)
+        verify_original_database(source_guard)
+        copied_tables = local_table_count(conf, safe_container=obj["db"])
         if copied_tables != source_tables:
             raise RuntimeError("Safe MySQL clone table count differs from source")
         print("[ok] Disposable MySQL contains " + str(copied_tables) + " tables", flush=True)
         invoke([*args, "up", "-d", "safe-tls"], cwd=site_dir)
+        verify_original_database(source_guard)
         print("[ok] Safe preview: https://" + slug + "." + conf["SITE_DOMAIN"]
               + ":" + str(port), flush=True)
         print("[info] WordPress plugins and MU-plugins are absent from the preview.", flush=True)
         print("[ok] Preview writes go to a disposable MySQL volume; original LOCAL DB is not mounted in PHP.")
-    except BaseException:
+    except BaseException as start_error:
         # Roll back only preview resources; never docker compose down, which
         # would remove the original site's database and other volumes.
         cleanup_ok = True
+        source_guard_error = None
+        try:
+            verify_original_database(source_guard)
+        except Exception as error:  # Keep rolling back our own preview resources.
+            source_guard_error = error
         if (runtime / "compose.safe.yml").is_file():
             args = compose_args(site_dir, runtime)
             for action in ("stop", "rm"):
@@ -612,6 +765,10 @@ def safe_start(site_dir, proxy_dir, port):
         else:
             print("[warn] Incomplete safe-preview rollback: preserving runtime for recovery",
                   file=sys.stderr)
+        if source_guard_error is not None:
+            raise RuntimeError(
+                "Original MySQL safety verification failed: " + str(source_guard_error)
+            ) from start_error
         raise
 
 
