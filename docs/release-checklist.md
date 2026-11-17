@@ -71,8 +71,13 @@ the last published `VERSION` or Git tag.
 - [ ] Update `VERSION` and changelog version heading in a reviewed PR.
 - [ ] Merge release changes via the protected `main` branch; check CI on
   the resulting merge/squash SHA.
-- [ ] Create an annotated tag on that exact commit and publish release
-  notes listing new behavior, compatibility and known risks.
+- [ ] In GitHub Actions, manually run **Publish Docal Release** from
+  `main` with version `0.3.0`. The workflow checks `VERSION`, the exact
+  `main` SHA, `tests` and `shell-checks` before creating an **annotated**
+  `v0.3.0` tag and publishing `docs/releases/v0.3.0.md` as a GitHub Release.
+  Confirm the resulting tag points to the approved release commit.
+  If a manual publication fails, inspect its log before retrying; do not
+  replace an existing tag without a separate review.
 - [ ] Test the documented installation/update path in a disposable
   fresh WSL2 environment; do not overwrite existing Docal user sites.
 
