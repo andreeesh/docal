@@ -543,31 +543,62 @@ def safe_start(site_dir, proxy_dir, port):
             raise RuntimeError("Dedicated TLS edge network is not isolated and empty")
         print("[info] Testing IPv4, IPv6 and DNS egress before starting PHP...", flush=True)
         probe_network(obj["image"], obj["network"], runtime / "resolv.conf")
-        # Start the original site's DB only, never its public web service.
+        # Source DB is accessed only by an ordinary local CLI export.
+        # It is never attached to WordPress's dedicated safe network.
         invoke(["docker", "compose", "up", "-d", "db"], cwd=site_dir)
         args = compose_args(site_dir, runtime)
+        print("[info] Starting disposable MySQL volume and socket...", flush=True)
+        invoke([*args, "up", "-d", "--wait", "safe-db"], cwd=site_dir)
+        print("[info] Streaming the LOCAL database into disposable MySQL...", flush=True)
+        source_tables = local_table_count(site_dir, conf)
+        if source_tables == 0:
+            raise RuntimeError("Cannot preview an empty local WordPress database")
+        stream_local_database(site_dir, conf, obj["db"])
+        copied_tables = local_table_count(site_dir, conf, obj["db"])
+        if copied_tables != source_tables:
+            raise RuntimeError("Safe MySQL clone table count differs from source")
+        print("[ok] Disposable MySQL contains " + str(copied_tables) + " tables", flush=True)
         invoke([*args, "up", "-d", "safe-tls"], cwd=site_dir)
         print("[ok] Safe preview: https://" + slug + "." + conf["SITE_DOMAIN"]
               + ":" + str(port), flush=True)
         print("[info] WordPress plugins and MU-plugins are absent from the preview.", flush=True)
-        print("[warn] This mode still uses the site's LOCAL database; it can change during browsing.")
+        print("[ok] Preview writes go to a disposable MySQL volume; original LOCAL DB is not mounted in PHP.")
     except BaseException:
-        # Stop only this preview; do not call compose down (which stops db).
+        # Roll back only preview resources; never docker compose down, which
+        # would remove the original site's database and other volumes.
+        cleanup_ok = True
         if (runtime / "compose.safe.yml").is_file():
             args = compose_args(site_dir, runtime)
-            invoke([*args, "stop", "safe-tls", "safe-web"],
-                   cwd=site_dir, check=False)
-            invoke([*args, "rm", "-sf", "safe-tls", "safe-web"],
-                   cwd=site_dir, check=False)
+            for action in ("stop", "rm"):
+                command = ([*args, "stop", "safe-tls", "safe-web", "safe-db"]
+                           if action == "stop" else
+                           [*args, "rm", "-sf", "safe-tls", "safe-web", "safe-db"])
+                if invoke(command, cwd=site_dir, check=False).returncode:
+                    cleanup_ok = False
         for network in reversed(networks_created):
-            # A replaced or externally modified network must not be deleted.
             try:
                 assert_owned_network(network, slug)
             except (OSError, ValueError, RuntimeError):
-                pass
+                cleanup_ok = False
             else:
-                invoke(["docker", "network", "rm", network], check=False)
-        shutil.rmtree(runtime)
+                if invoke(["docker", "network", "rm", network],
+                          check=False).returncode:
+                    cleanup_ok = False
+        for key in ("db_socket", "db_data"):
+            if resource_exists("volume", obj[key]):
+                try:
+                    assert_owned_volume(obj[key], slug)
+                except (OSError, ValueError, RuntimeError):
+                    cleanup_ok = False
+                else:
+                    if invoke(["docker", "volume", "rm", obj[key]],
+                              check=False).returncode:
+                        cleanup_ok = False
+        if cleanup_ok:
+            shutil.rmtree(runtime)
+        else:
+            print("[warn] Incomplete safe-preview rollback: preserving runtime for recovery",
+                  file=sys.stderr)
         raise
 
 
@@ -585,17 +616,21 @@ def safe_stop(site_dir):
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
     if (identity.get("site") != conf["SITE_SLUG"]
             or identity.get("network") != obj["network"]
-            or identity.get("edge_network") != obj["edge_network"]):
+            or identity.get("edge_network") != obj["edge_network"]
+            or identity.get("db") != obj["db"]
+            or identity.get("db_data") != obj["db_data"]
+            or identity.get("db_socket") != obj["db_socket"]):
         raise ValueError("Safe preview identity mismatch; refusing cleanup")
     args = compose_args(site_dir, runtime)
-    invoke([*args, "stop", "safe-tls", "safe-web"], cwd=site_dir)
-    invoke([*args, "rm", "-sf", "safe-tls", "safe-web"], cwd=site_dir)
+    invoke([*args, "stop", "safe-tls", "safe-web", "safe-db"], cwd=site_dir)
+    invoke([*args, "rm", "-sf", "safe-tls", "safe-web", "safe-db"], cwd=site_dir)
     for network in (obj["network"], obj["edge_network"]):
         if resource_exists("network", network):
             assert_owned_network(network, conf["SITE_SLUG"])
             invoke(["docker", "network", "rm", network])
+    cleanup_owned_volumes(obj, conf["SITE_SLUG"], strict=True)
     shutil.rmtree(runtime)
-    print("[ok] Safe preview web containers, networks and copy removed")
+    print("[ok] Safe preview web, disposable MySQL, networks and files removed")
     return True
 
 
