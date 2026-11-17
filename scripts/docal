@@ -753,7 +753,13 @@ cmd_proxy() {
 cmd_mail() {
   local sub="${1:-status}"
   shift || true
-  [[ $# -eq 0 ]] || err "Usage: docal mail [start|stop|status|url]"
+  if [[ "${sub}" == "enable" || "${sub}" == "disable" ]]; then
+    [[ $# -eq 1 ]] || err "Usage: docal mail ${sub} <site>"
+    require_site "$1"
+    python3 "${SCRIPTS_DIR}/mailpit-site.py" "${sub}" --site-dir "${SITES_DIR}/$1"
+    return
+  fi
+  [[ $# -eq 0 ]] || err "Usage: docal mail [start|stop|status|url|enable <site>|disable <site>]"
   local url="http://localhost:8025"
   case "${sub}" in
     start)
@@ -1154,6 +1160,7 @@ cmd_help() {
   echo ""
   echo -e "  ${BOLD}Development${NC}"
   echo "    mail    [start|stop|status|url]   Shared local-only Mailpit inbox (port 8025)"
+  echo "    mail    enable|disable <site>    Opt-in WP mail() capture on an existing site"
   echo "    exec    <site> [command]         Run a command in the WordPress container"
   echo "    logs    <site> [service]         Tail logs in real time"
   echo ""
@@ -1216,7 +1223,7 @@ shift 2>/dev/null || true
 
 case "${COMMAND}" in
   help|--help|-h|install|clean-certs|cc|config|version|--version|-v|doctor|update|uninstall|pull) : ;;
-  mail) [[ "${1:-}" == "url" ]] || ensure_docker "$@" ;;
+  mail) case "${1:-}" in url|enable|disable) : ;; *) ensure_docker "$@" ;; esac ;;
   *) ensure_docker "$@" ;;
 esac
 
