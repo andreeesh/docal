@@ -2,12 +2,14 @@
 """Fail-closed local preview of a Docal site, with isolated WordPress networking.
 
 Preview serves https://<site>.localhost:<port> via a separate local-only TLS
-reverse proxy. WordPress joins ONLY a fresh internal network and reaches its
-existing LOCAL MySQL database through the Docal socket volume. Plugins, MU
-plugins and common drop-ins are excluded from a disposable file copy.
+reverse proxy. WordPress joins ONLY a fresh internal network and uses a disposable MySQL
+clone over a dedicated private Unix socket volume. Plugins, MU plugins and
+common drop-ins are excluded from a disposable file copy.
 
-This does NOT snapshot the existing local database or guarantee that themes
-have no side effects. A Docker networking / egress probe must pass before PHP
+The clone is populated via a read-only LOCAL SQL export streamed into a
+new temporary MySQL volume. No SQL dump is written to disk. The original
+local database is not connected to preview PHP; this does not guarantee
+that custom themes have no side effects. A Docker networking / egress probe must pass before PHP
 is started. It intentionally leaves the normal Docal proxy untouched.
 """
 
@@ -99,6 +101,9 @@ def names(slug):
         "edge_network": "docal-" + slug + "-safe-edge",
         "web": "docal-" + slug + "-safe-web",
         "tls": "docal-" + slug + "-safe-tls",
+        "db": "docal-" + slug + "-safe-db",
+        "db_data": "docal-" + slug + "-safe-db-data",
+        "db_socket": "docal-" + slug + "-safe-db-socket",
         "image": "docal/wordpress-" + slug + ":latest",
     }
 
@@ -111,13 +116,37 @@ def resource_exists(kind, name):
 
 def assert_available(slug):
     obj = names(slug)
-    for key in ("network", "edge_network", "web", "tls"):
-        kind = "network" if key in ("network", "edge_network") else "container"
+    for key in ("network", "edge_network", "web", "tls", "db", "db_data", "db_socket"):
+        kind = ("network" if key in ("network", "edge_network") else
+                "volume" if key in ("db_data", "db_socket") else "container")
         if resource_exists(kind, obj[key]):
             raise ValueError(
                 "Safe preview resource already exists: " + obj[key]
                 + "; refusing to replace any Docker resource"
             )
+
+
+def local_mysql_image(site_dir):
+    """Resolve the site's existing MySQL image without launching any service."""
+    result = invoke(["docker", "compose", "config", "--format", "json"],
+                    cwd=site_dir, capture=True)
+    services = json.loads(result.stdout).get("services") or {}
+    image = (services.get("db") or {}).get("image") or ""
+    if not isinstance(image, str) or not re.fullmatch(r"mysql:[A-Za-z0-9_.-]+", image):
+        raise ValueError("Unsupported local MySQL image; refusing safe DB clone")
+    if not resource_exists("image", image):
+        raise ValueError("Local MySQL image is missing; refusing automatic pull in safe mode")
+    return image
+
+
+def db_credentials(conf):
+    values = [conf.get(key, "") for key in ("DB_NAME", "DB_USER", "DB_PASSWORD")]
+    if (not all(isinstance(val, str) for val in values)
+            or not all(values)
+            or not re.fullmatch(r"[A-Za-z0-9_]+", values[0])
+            or not re.fullmatch(r"[A-Za-z0-9_]+", values[1])):
+        raise ValueError("Invalid local database credentials for safe preview")
+    return values
 
 
 def prepare_files(site_dir, runtime):
@@ -178,7 +207,7 @@ def update_preview_config(config_path, url):
     config_path.chmod(0o640)
 
 
-def prepare_runtime(site_dir, proxy_dir, port, runtime):
+def prepare_runtime(site_dir, proxy_dir, port, runtime, mysql_image=None):
     conf = read_site(site_dir)
     slug, domain = conf["SITE_SLUG"], conf["SITE_DOMAIN"]
     hostname = slug + "." + domain
@@ -224,19 +253,50 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime):
         encoding="utf-8",
     )
     obj = names(slug)
+    if mysql_image is None:
+        mysql_image = local_mysql_image(site_dir)
+    db_name, db_user, db_password = db_credentials(conf)
+    # Docker Compose interpolates $ in values, so escape it in private JSON.
+    compose_password = db_password.replace("$", "$")
     # All paths are fully qualified and serialized by json.dumps; JSON is
     # accepted YAML, so Compose can read this without a YAML dependency.
     override = {
         "services": {
+            "safe-db": {
+                "profiles": ["safe"],
+                "image": mysql_image,
+                "container_name": obj["db"],
+                "restart": "no",
+                "environment": {
+                    "MYSQL_DATABASE": db_name,
+                    "MYSQL_USER": db_user,
+                    "MYSQL_PASSWORD": compose_password,
+                    "MYSQL_ROOT_PASSWORD": compose_password,
+                },
+                "volumes": [
+                    "docal-safe-db-data:/var/lib/mysql",
+                    "docal-safe-db-socket:/var/run/mysqld",
+                ],
+                "networks": ["docal-safe-internal"],
+                "healthcheck": {
+                    "test": ["CMD-SHELL", "mysqladmin ping -h localhost --silent"],
+                    "interval": "5s",
+                    "timeout": "3s",
+                    "retries": 30,
+                    "start_period": "20s",
+                },
+                "security_opt": ["no-new-privileges:true"],
+                "labels": {"traefik.enable": "false", "docal.safe.site": slug},
+            },
             "safe-web": {
                 "profiles": ["safe"],
                 "image": obj["image"],
                 "container_name": obj["web"],
                 "restart": "no",
-                "depends_on": {"db": {"condition": "service_healthy"}},
+                "depends_on": {"safe-db": {"condition": "service_healthy"}},
                 "volumes": [
                     str(runtime / "wordpress") + ":/var/www/html:ro",
-                    "db-socket:/var/run/mysqld",
+                    "docal-safe-db-socket:/var/run/mysqld",
                     str(runtime / "safe.ini") + ":/usr/local/etc/php/conf.d/zz-docal-safe.ini:ro",
                     str(runtime / "safe-apache.conf") + ":/etc/apache2/conf-enabled/zz-docal-safe.conf:ro",
                     str(runtime / "resolv.conf") + ":/etc/resolv.conf:ro",
@@ -274,13 +334,25 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime):
             "docal-safe-internal": {"external": True, "name": obj["network"]},
             "safe-tls-edge": {"external": True, "name": obj["edge_network"]},
         },
+        "volumes": {
+            "docal-safe-db-data": {
+                "name": obj["db_data"],
+                "labels": {"docal.safe.site": slug},
+            },
+            "docal-safe-db-socket": {
+                "name": obj["db_socket"],
+                "labels": {"docal.safe.site": slug},
+            },
+        },
     }
     (runtime / "compose.safe.yml").write_text(
         json.dumps(override, indent=2) + "\n", encoding="utf-8",
     )
     (runtime / "identity.json").write_text(
         json.dumps({"site": slug, "port": port, "network": obj["network"],
-                    "edge_network": obj["edge_network"]}),
+                    "edge_network": obj["edge_network"],
+                    "db": obj["db"], "db_data": obj["db_data"],
+                    "db_socket": obj["db_socket"]}),
         encoding="utf-8",
     )
     return obj
@@ -327,6 +399,95 @@ def inspect_network(name, slug):
         raise RuntimeError("Dedicated preview network is not internal IPv4-only")
     if data.get("Containers"):
         raise RuntimeError("Preview network unexpectedly already has containers")
+
+
+def assert_owned_volume(name, slug):
+    detail = invoke(
+        ["docker", "volume", "inspect", name, "--format", "{{json .}}"],
+        capture=True,
+    ).stdout
+    data = json.loads(detail)
+    if (data.get("Labels") or {}).get("docal.safe.site") != slug:
+        raise RuntimeError("Disposable database volume is not owned by this Docal site")
+    return data
+
+
+def local_table_count(site_dir, conf, safe_container=None):
+    db_name, db_user, db_password = db_credentials(conf)
+    prefix = (["docker", "exec", "-e", "MYSQL_PWD", safe_container]
+              if safe_container else
+              ["docker", "compose", "exec", "-T", "-e", "MYSQL_PWD", "db"])
+    env = dict(os.environ, MYSQL_PWD=db_password)
+    command = prefix + [
+        "mysql", "--batch", "--skip-column-names", "-u", db_user,
+        db_name, "-e", "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()",
+    ]
+    result = subprocess.run(
+        command, cwd=None if safe_container else site_dir, env=env,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip().isdigit():
+        raise RuntimeError("Could not verify local database table count")
+    return int(result.stdout.strip())
+
+
+def stream_local_database(site_dir, conf, safe_container):
+    """Stream a consistent best-effort LOCAL mysqldump into disposable MySQL.
+
+    No SQL dump file or customer data is printed or stored in local staging.
+    Both endpoints receive MYSQL_PWD via the process environment, not argv.
+    """
+    import tempfile
+    db_name, db_user, db_password = db_credentials(conf)
+    env = dict(os.environ, MYSQL_PWD=db_password)
+    source_args = [
+        "docker", "compose", "exec", "-T", "-e", "MYSQL_PWD", "db",
+        "mysqldump", "--single-transaction", "--quick", "--skip-lock-tables",
+        "--no-tablespaces", "-u", db_user, db_name,
+    ]
+    sink_args = [
+        "docker", "exec", "-i", "-e", "MYSQL_PWD", safe_container,
+        "mysql", "-u", db_user, db_name,
+    ]
+    with tempfile.TemporaryFile() as source_err, tempfile.TemporaryFile() as sink_err:
+        source = subprocess.Popen(
+            source_args, cwd=site_dir, env=env, stdout=subprocess.PIPE,
+            stderr=source_err,
+        )
+        sink = None
+        try:
+            assert source.stdout is not None
+            sink = subprocess.Popen(
+                sink_args, env=env, stdin=source.stdout,
+                stdout=subprocess.DEVNULL, stderr=sink_err,
+            )
+            source.stdout.close()
+            source_rc = source.wait()
+            sink_rc = sink.wait()
+            if source_rc != 0 or sink_rc != 0:
+                raise RuntimeError("Disposable SQL copy failed: source=" +
+                                   str(source_rc) + ", sink=" + str(sink_rc))
+        except BaseException:
+            if source.poll() is None:
+                source.kill()
+            source.wait()
+            if sink is not None:
+                if sink.poll() is None:
+                    sink.kill()
+                sink.wait()
+            raise
+
+
+def cleanup_owned_volumes(obj, slug, *, strict):
+    for key in ("db_socket", "db_data"):
+        name = obj[key]
+        if resource_exists("volume", name):
+            try:
+                assert_owned_volume(name, slug)
+                invoke(["docker", "volume", "rm", name], check=strict)
+            except (OSError, ValueError, RuntimeError):
+                if strict:
+                    raise
 
 
 def probe_network(image, network, resolv):
