@@ -67,6 +67,14 @@ if ! docker network inspect docal-proxy >/dev/null 2>&1; then
 fi
 
 cd "${PROXY_DIR}"
-docker compose up -d --build
+# Keep existing WordPress sites available even if Mailpit's optional UI port
+# is already in use. Starting a new mail sink must never stop Traefik.
+docker compose up -d --build traefik
+
+if docker compose up -d mailpit; then
+  echo "[ok] Mailpit inbox at http://localhost:8025"
+else
+  echo "[warn] Mailpit could not start (check loopback port 8025); Traefik remains running." >&2
+fi
 
 echo "[ok] Traefik proxy running at http://localhost:8080"
