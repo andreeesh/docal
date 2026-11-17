@@ -39,10 +39,19 @@ live in `~/Sites` (or wherever `docal config set sites_dir` points) instead.
 
 ## CLI (`scripts/docal`)
 
-Commands: `create`, `start`, `stop`, `restart`, `rebuild`, `fix-rewrites`, `delete`, `list`,
-`info`, `logs`, `exec`, `wp`, `lint`, `replace-url`, `export-db`, `import-db`, `import-wpress`,
-`clean-certs`, `proxy`, `tunnel`, `doctor`, `config`, `update`, `uninstall`, `install`, `version`,
-`help`.
+Commands: `create`, `start` (including isolated `--safe`), `stop`, `restart`, `rebuild`,
+`fix-rewrites`, `delete`, `list`, `info`, `logs`, `exec`, `wp`, `lint`,
+`replace-url`, `export-db`, `import-db`, `import` (ZIP + SQL), `pull` (SSH),
+`import-wpress`, `clean-certs`, `proxy`, `tunnel`, `doctor`, `config`,
+`update`, `uninstall`, `install`, `version`, `help`.
+
+**Safety invariant:** A Safe Start preview never runs the restored WordPress
+web service or uses the original local site's database socket. The original
+MySQL container must already be running/healthy; do not reintroduce
+`docker compose up -d db` or any Compose reconciliation against that
+original service in Safe Start. Use read-only Docker inspections and
+`docker exec`; verify container/network state throughout the clone.
+See [Safe Start](docs/safe-start.md) and the [release checklist](docs/release-checklist.md).
 
 `create` without a site name is interactive; with a name runs `--non-interactive` (skips
 plugin/import prompts).
@@ -128,6 +137,22 @@ Shared helper `finalize_imported_site` in `lib-import-wpress.sh`:
 - `wp cache flush`
 
 Files-only import (no DB): chown uploads + rewrites; skip URL replace.
+
+## ZIP/SQL, SSH and Safe Start regressions
+
+- `tests/test_import_zip_sql_orchestrator.sh` and related tests cover
+  new-site import preflight, staging, SQL preparation and failure handling.
+- `tests/test_pull_ssh.sh` exercises the remote-command contract with
+  mocked SSH/rsync and global Docker resource name refusal.
+- `tests/test_safe_start.sh` checks the isolated preview topology,
+  original-DB identity/network invariants and cleanup of owned preview
+  resources. These mocks supplement, but do not replace, a real WSL2
+  Docker networking test when safe networking changes.
+- `tests/test_release_contracts.sh` checks Python source parsing, local
+  documentation links and obsolete feature-branch status claims.
+- Never run integration tests against old production/client QA imports or
+  shared Docal proxy resources. Prefer a fully synthetic site with an
+  isolated worktree, baseline Docker inventory and verified cleanup.
 
 ## Known environment quirks
 
