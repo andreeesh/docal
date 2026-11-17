@@ -186,8 +186,9 @@ docal mail status
 New WordPress images route the default PHP `mail()` / WordPress
 `wp_mail()` transport into Mailpit, **not to real recipients**.
 Safe Start continues to block outgoing mail and does not join the shared
-Mailpit network. Existing WordPress images and custom SMTP plugins may
-require explicit configuration; they are **not changed automatically**.
+Mailpit network. Existing sites are not modified automatically; use `docal mail enable mysite`
+for an opt-in reversible WordPress mail hook. Custom SMTP plugins may still
+bypass local capture.
 See [Mailpit setup and safety limits](docs/mailpit.md).
 
 ## Common workflows
