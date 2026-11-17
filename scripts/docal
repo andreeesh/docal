@@ -229,6 +229,9 @@ cmd_start() {
   if [[ -f "${site_dir}/.docal-import-pending" ]]; then
     err "Cannot start pending WordPress import"
   fi
+  if [[ -f "${site_dir}/.docal-imported" ]]; then
+    warn "Imported site: normal start can execute restored plugins and contact external services. Prefer: docal start ${site} --safe"
+  fi
   info "Starting '${site}'..."
   bash "${SCRIPTS_DIR}/start-proxy.sh" >/dev/null 2>&1 || true
   cd "${site_dir}"
