@@ -3,6 +3,41 @@
 Bringing a real WordPress site local — from a client handoff, a backup, or production — is one of
 the main reasons to reach for Docal instead of a generic Docker setup.
 
+## New site from ZIP + SQL (without a migration plugin)
+
+If you have a WordPress ZIP and SQL dump, create a **new local site**:
+
+```bash
+docal import myshop --zip ./wordpress.zip --db ./database.sql.gz
+docal start myshop --safe --port 8443
+# Review at https://myshop.localhost:8443
+docal stop myshop
+```
+
+This path validates the inputs, refuses existing site names, restores the
+database into an isolated local MySQL service, normalizes URLs and admin
+credentials, and leaves WordPress stopped. The original PHP plugins are
+not served during import. Inspect the result using Safe Start before
+intentionally running the normal site; Safe Start uses a disposable DB
+clone so browsing does not modify the source local database.
+
+See [ZIP + SQL implementation](import-zip-sql-design.md) and
+[Safe preview](safe-start.md).
+
+## Pull a site over SSH
+
+```bash
+docal pull myshop --ssh production-alias --path /var/www/html --dry-run
+docal pull myshop --ssh production-alias --path /var/www/html
+docal start myshop --safe --port 8443
+```
+
+The SSH alias and remote path are explicit. Remote WP-CLI and rsync
+collect `wp-content` and database SQL using a remote-read-only design.
+Always use an approved remote account; unrelated remote startup hooks
+are outside Docal's control. A local site must not already exist under
+that name. See [SSH import](import-ssh.md).
+
 ## During `docal create` (interactive only)
 
 When you run `docal create` interactively, it looks for import sources in three optional folders
@@ -124,7 +159,7 @@ docal create <site> --upload=12G --aiowp
 
 ## Roadmap
 
-A unified `docal import <site> <file>` that dispatches on file extension (`.wpress`, `.sql[.gz]`,
-`.zip`) instead of three separate entry points, and eventually `docal pull` for a
-production-to-local sync over SSH, are planned — see the README's Roadmap section. Neither exists
-yet.
+The current `docal import` requires explicit `--zip` and `--db` inputs,
+and `docal pull` uses explicit SSH alias and remote path arguments.
+Automatic source-format detection, new import adapters and incremental
+remote synchronization remain future work. See the [README roadmap](../README.md#roadmap).
