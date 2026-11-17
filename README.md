@@ -46,19 +46,21 @@ Docal automates the ones it can, today:
 - Optional Cloudflare Tunnel for sharing a site publicly
 - No Docker Desktop — Docker Engine runs natively inside WSL2
 
-Nothing above is aspirational — see [Roadmap](#roadmap) for what's planned but not built yet
-(Mailpit, a unified `import`, snapshots, `docal pull`).
+The ZIP + SQL importer, SSH pull and isolated Safe Start are implemented.
+See [Roadmap](#roadmap) for planned capabilities such as Mailpit,
+snapshots and automatic source detection.
 
 ## From production to local
 
-### ZIP + SQL (experimental on the development branch)
+### ZIP + SQL
 
 For developers with a standard WordPress ZIP plus a database dump, the new
 plugin-independent command creates a **new** site:
 
 ```bash
 docal import mysite --zip ./site.zip --db ./database.sql.gz
-docal start mysite
+docal start mysite --safe --port 8443 # review with isolated PHP and disposable MySQL
+docal stop mysite
 ```
 
 The archive may contain full WordPress or only `wp-content`. Database dumps
@@ -68,11 +70,12 @@ URLs and generates a fresh local administrator password. The importer leaves
 WordPress stopped until you explicitly start it, so restored plugins do not
 run during database preparation.
 
-**Status:** this command is implemented on the feature branch, but has not
-passed a real Docker/MySQL end-to-end restore yet; it remains part of a draft
-PR. See [ZIP + SQL design](docs/import-zip-sql-design.md).
+ZIP + SQL import is available in `main` and has been tested with
+real Docker/MySQL. See [ZIP + SQL design and limits](docs/import-zip-sql-design.md).
+For a restored client site, inspect it with `--safe` first; a normal
+`docal start` enables the restored PHP plugins and shared proxy.
 
-### SSH import (experimental on the development branch)
+### SSH pull (read-only remote acquisition)
 
 With an SSH alias, remote WP-CLI and rsync access, Docal can collect
 `wp-content` and a database dump without creating a backup file remotely:
@@ -80,13 +83,16 @@ With an SSH alias, remote WP-CLI and rsync access, Docal can collect
 ```bash
 docal pull mysite --ssh production-alias --path /var/www/html --dry-run
 docal pull mysite --ssh production-alias --path /var/www/html
-docal start mysite
+docal start mysite --safe --port 8443
 ```
 
 The remote acquisition is designed to be read-only. The new local site
 uses Docal's existing ZIP + SQL importer; no commercial plugin is needed.
-A real SSH E2E test is still pending. See
-[SSH import instructions](docs/import-ssh.md).
+SSH transfer and local restoration were exercised against a real WordPress
+site, and the imported local copy passed isolation smoke tests. Remote
+acquisition is designed to be read-only; remote WP-CLI hooks are outside
+Docal's control. See [SSH import instructions](docs/import-ssh.md) for
+prerequisites, limits and data-handling precautions.
 
 ### All-in-One WP Migration (.wpress), optional
 
@@ -145,7 +151,7 @@ That's it — no Docker Desktop, no manual WSL setup unless `docal doctor` tells
 missing. Full installation details, including the manual/no-curl path, are in
 [docs/installation.md](docs/installation.md).
 
-## Safe preview (experimental in PR #6)
+## Safe preview — disposable WordPress and MySQL
 
 To inspect a restored site without enabling its plugins or joining the shared
 Traefik network, use the explicit safe preview mode:
@@ -156,13 +162,15 @@ docal start mysite --safe --port 8443
 docal stop mysite
 ```
 
-The preview uses an internal Docker network, a separate localhost-only
-HTTPS frontend, a disposable plugin-free file copy, and an outbound traffic
-probe that must pass before starting PHP. In the experimental PR #7, Safe
-Start also streams the existing local MySQL data into **disposable private
-MySQL volumes** so preview browsing cannot write to the original local
-WordPress database. A dedicated Docker E2E check is required before merging.
-See [Safe preview](docs/safe-start.md).
+The preview uses an internal Docker network, a loopback-only HTTPS frontend,
+a disposable plugin-free file copy and a **private disposable MySQL clone**.
+It validates outbound IPv4/IPv6/DNS isolation before running site PHP.
+The **original local MySQL container must already be running and healthy**;
+Safe Start inspects it without restarting, reconnecting or reconfiguring it.
+`docal stop mysite` discards the temporary files, database and preview
+networks, while leaving the original local database running. These behaviors
+were validated on Docker Engine in WSL2 with a synthetic WordPress site.
+See [Safe preview](docs/safe-start.md) for limitations.
 
 ## Common workflows
 
@@ -174,10 +182,10 @@ docal create mysite
 docal config set default_php 8.3
 docal config set sites_dir ~/projects
 
-# Import ZIP + SQL into a new site (experimental branch)
+# Import ZIP + SQL into a new site
 docal import newsite --zip site.zip --db database.sql.gz
 
-# Import from SSH (experimental branch; requires remote WP-CLI + rsync)
+# Import from SSH (requires remote WP-CLI + rsync)
 docal pull remote-copy --ssh prod-alias --path /var/www/html --dry-run
 
 # Optional: restore a .wpress backup using your compatible migration plugins
@@ -261,6 +269,8 @@ generality is a real advantage Docal doesn't try to match.
 - [Troubleshooting](docs/troubleshooting.md)
 - [Architecture](docs/architecture.md)
 - [Security notes](docs/security.md)
+- [Safe preview](docs/safe-start.md)
+- [Release checklist](docs/release-checklist.md)
 
 ## Roadmap
 
