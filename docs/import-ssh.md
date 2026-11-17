@@ -49,6 +49,19 @@ WordPress stays **stopped** after the import. Start it explicitly:
 
 Never specify an already-existing local Docal site as the pull target.
 
+**Docker Engine naming is global.** A separate `DOCAL_HOME` or
+`DOCAL_SITES_DIR` does not isolate existing Docker containers or volumes.
+Before the first actual transfer, Docal checks whether the selected slug
+would reuse a container (`docal-<slug>-db/wp`), named volume, image
+(`docal/wordpress-<slug>:latest`) or default network. If there is a
+collision, choose a *different new slug* rather than deleting or renaming
+the existing QA site's resources. The `--dry-run` mode intentionally
+does not require Docker and checks SSH prerequisites only.
+
+For a local web smoke test, reuse an already restored QA site instead of
+re-importing production data, and ensure the test web container is isolated
+from outbound network access before starting it.
+
 ## Acquisition and import pipeline
 
 1. Validate the new site name, SSH alias, remote path and local site path.
