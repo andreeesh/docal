@@ -53,7 +53,7 @@ status, and the admin username. Full `.env` (including DB credentials) is at
 docal info myblog
 ```
 
-### `docal start <site> --safe [--port 8443]` (experimental)
+### `docal start <site> --safe [--port 8443]`
 
 Runs a plugin-free WordPress preview from a temporary file copy on a
 new internal Docker network, with a separate TLS proxy bound only to
@@ -66,13 +66,15 @@ docal start mysite --safe --port 8443
 docal stop mysite
 ```
 
-The preview uses a disposable file copy and, in experimental PR #7, a
-**disposable local MySQL clone** populated through a streaming SQL export.
-WordPress does not mount the source database socket. `docal stop` removes
-the preview MySQL volumes but leaves the original local DB running. No
-original WordPress web service or shared Traefik network is started.
-Requires rsync and a local TLS certificate. The temporary-DB extension
-requires its own real Docker E2E validation. See [Safe preview](safe-start.md).
+The preview uses a disposable WordPress file copy and a **disposable MySQL
+clone** populated by streaming SQL from the already-running original local
+DB. The original DB must be healthy: Safe Start refuses to start or
+reconfigure it. WordPress mounts only the private clone's Unix socket.
+`docal stop` removes preview MySQL volumes and temporary web resources but
+leaves the original DB running. No normal WordPress service or shared
+Traefik network is started. Requires rsync and a local TLS certificate.
+The implementation has passed a synthetic WordPress E2E on WSL2.
+See [Safe preview](safe-start.md).
 
 ### `docal start` / `stop` / `restart` <site>
 
@@ -102,7 +104,7 @@ docal wp myblog user list
 docal wp myblog theme install twentytwentyfour --activate
 ```
 
-### `docal import <new-site> --zip ZIP --db SQL` (experimental)
+### `docal import <new-site> --zip ZIP --db SQL`
 
 Creates a **new** WordPress site from a standard ZIP and SQL database dump.
 The ZIP can contain WordPress core plus `wp-content`, or `wp-content`
@@ -111,7 +113,7 @@ alone. The SQL dump can be `.sql`, `.sql.gz`, or a gzip-compressed
 
 ```bash
 docal import myblog --zip ./site.zip --db ./backup.sql.gz
-docal start myblog
+docal start myblog --safe --port 8443
 ```
 
 Input files are validated and staged before creating a site. Docal then
@@ -124,11 +126,11 @@ Failed imports can leave an incomplete, import-pending **new** site for
 diagnosis. The standard `docal start` command refuses to start such a
 site; manually remove it with `docal delete` before retrying.
 
-This command is currently part of a draft feature PR. The unit tests
-and simulated Docker tests pass, but a real end-to-end restore is not
-yet validated. See [ZIP + SQL design](import-zip-sql-design.md).
+The ZIP + SQL restore flow was validated on Docker/MySQL. Inspect
+restored sites using `--safe` before deliberately running their plugins
+with ordinary `docal start`. See [ZIP + SQL design](import-zip-sql-design.md).
 
-### `docal pull <new-site> --ssh ALIAS --path REMOTE_PATH [--dry-run]` (experimental)
+### `docal pull <new-site> --ssh ALIAS --path REMOTE_PATH [--dry-run]`
 
 Clones a remote site's `wp-content` and database to a **new** local Docal
 site using a host alias configured in `~/.ssh/config`.
@@ -136,7 +138,7 @@ site using a host alias configured in `~/.ssh/config`.
 ```bash
 docal pull mysite --ssh prod-alias --path /var/www/html --dry-run
 docal pull mysite --ssh prod-alias --path /var/www/html
-docal start mysite
+docal start mysite --safe --port 8443
 ```
 
 `--dry-run` verifies the remote WP-CLI table prefix and prerequisites,
@@ -148,7 +150,9 @@ normalization and creates the local site, which remains stopped.
 Requires remote `rsync` and `wp`, local key-based SSH, a trusted host key,
 and an absolute remote WordPress path. No remote credentials are stored.
 See [SSH import](import-ssh.md) for scope, consistency limits and safety
-considerations. Real remote end-to-end tests are still pending.
+considerations. The remote acquisition and subsequent local restore have
+been exercised end to end on a real WordPress site. This is still
+best-effort consistency, not an atomic production snapshot.
 
 ### `docal import-wpress <site> [file]`
 
