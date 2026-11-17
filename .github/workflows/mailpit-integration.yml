@@ -8,8 +8,10 @@ on:
       - 'proxy/docker-compose.yml'
       - 'scripts/start-proxy.sh'
       - 'scripts/docal'
+      - 'scripts/mailpit-site.py'
       - 'templates/Dockerfile.tpl'
       - 'tests/test_mailpit_contract.sh'
+      - 'tests/test_mailpit_existing_site.sh'
   push:
     branches: [main]
     paths:
@@ -17,8 +19,10 @@ on:
       - 'proxy/docker-compose.yml'
       - 'scripts/start-proxy.sh'
       - 'scripts/docal'
+      - 'scripts/mailpit-site.py'
       - 'templates/Dockerfile.tpl'
       - 'tests/test_mailpit_contract.sh'
+      - 'tests/test_mailpit_existing_site.sh'
 
 permissions:
   contents: read
@@ -64,6 +68,21 @@ jobs:
           docker build --progress=plain -t docal/mailpit-ci:local \
             /tmp/docal-mailpit-probe
 
+      - name: Validate opt-in WordPress Mailpit MU-plugin syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('site_mail', 'scripts/mailpit-site.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          Path('/tmp/docal-mailpit-probe/docal-mailpit-capture.php').write_text(module.PLUGIN_SOURCE)
+          PY
+          docker run --rm --entrypoint php \
+            -v /tmp/docal-mailpit-probe:/ci:ro \
+            docal/mailpit-ci:local -l /ci/docal-mailpit-capture.php
       - name: Verify PHP mail sends to Mailpit, not to real recipients
         shell: bash
         run: |
