@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (unreleased)
+
+- Shared Mailpit local email inbox (`docal mail start|stop|status|url`)
+  with loopback-only web access and container-only SMTP, plus a local
+  `msmtp-mta` transport for newly generated WordPress images.
+- Mail capture documentation and tests for proxy isolation, new-site
+  transport configuration and Safe Start's continued sendmail blockade.
+- Explicit compatibility guidance for existing sites and SMTP plugins.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
