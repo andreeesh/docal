@@ -15,6 +15,22 @@ spec.loader.exec_module(m)
 
 assert m.choose_prefix(["wp_options", "wp_users", "wp_usermeta"]) == "wp_"
 assert m.choose_prefix(["abc_options", "abc_users", "abc_usermeta"]) == "abc_"
+assert m.url_search_variants("https://example.test") == (
+    "https://example.test",
+    r"https:\/\/example.test",
+    "http://example.test",
+    r"http:\/\/example.test",
+    "//example.test",
+    r"\/\/example.test",
+)
+assert m.url_search_variants("http://www.example.test/subdir") == (
+    "http://www.example.test/subdir",
+    r"http:\/\/www.example.test\/subdir",
+    "https://www.example.test/subdir",
+    r"https:\/\/www.example.test\/subdir",
+    "//www.example.test/subdir",
+    r"\/\/www.example.test\/subdir",
+)
 assert m.choose_prefix([
     "wp_options", "wp_users", "wp_usermeta", "wp_2_options",
 ]) == "wp_"
@@ -53,6 +69,37 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "DISABLE_WP_CRON" in updated
     assert "WP_HTTP_BLOCK_EXTERNAL" in updated
     assert (local_config.stat().st_mode & 0o777) == 0o600
+
+    # Same-origin URLs in copied theme and generated assets are normalized.
+    assets = root / "assets"
+    assets.mkdir()
+    php_asset = assets / "theme.php"
+    css_asset = assets / "generated.css"
+    js_asset = assets / "builder.js"
+    html_asset = assets / "page.html"
+    json_asset = assets / "data.json"
+    binary_asset = assets / "font.css"
+    php_asset.write_text('<link href="https://example.test/media/hero.jpg">')
+    css_asset.write_text('url(//www.example.test/media/background.webp)')
+    js_asset.write_text(r'"src":"http:\/\/example.test\/media\/image.jpg"')
+    html_asset.write_text(
+        'mailto:team@example.test https://cdn.example.net/asset.css'
+    )
+    json_asset.write_text('{"url":"https://example.test/data"}')
+    binary_asset.write_bytes(b'\x00https://example.test/font.woff2')
+    changed_files, replacements = m.normalize_text_file_urls(
+        assets,
+        ["https://example.test", "https://www.example.test"],
+        "https://local.test",
+    )
+    assert (changed_files, replacements) == (3, 3)
+    assert 'https://local.test/media/hero.jpg' in php_asset.read_text()
+    assert 'https://local.test/media/background.webp' in css_asset.read_text()
+    assert r'https://local.test\/media\/image.jpg' in js_asset.read_text()
+    assert 'team@example.test' in html_asset.read_text()
+    assert 'https://cdn.example.net/asset.css' in html_asset.read_text()
+    assert 'https://example.test/data' in json_asset.read_text()
+    assert binary_asset.read_bytes() == b'\x00https://example.test/font.woff2'
 
     # Stage symlinks cannot affect files elsewhere.
     external = root / "external"

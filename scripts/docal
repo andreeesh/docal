@@ -560,6 +560,23 @@ cmd_import() {
   python3 "${SCRIPTS_DIR}/import-wordpress-zip-sql.py" "$@"
 }
 
+# ── SSH acquisition into new-site import ────────────────────────────────────
+cmd_pull() {
+  # SSH-only --dry-run must never start or install Docker locally.
+  local arg dry_run=0
+  for arg in "$@"; do
+    [[ "${arg}" == "--dry-run" ]] && dry_run=1
+  done
+  [[ "${dry_run}" -eq 1 ]] || ensure_docker "$@"
+  export SITE_DOMAIN="${SITE_DOMAIN:-$(config_get default_domain)}"
+  export PHP_VERSION="${PHP_VERSION:-$(config_get default_php)}"
+  export MYSQL_VERSION="${MYSQL_VERSION:-$(config_get default_mysql)}"
+  export ADMIN_EMAIL="${ADMIN_EMAIL:-$(config_get admin_email)}"
+  export ADMIN_USER="${ADMIN_USER:-$(config_get admin_user)}"
+  export MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-$(config_get default_upload_limit)}"
+  python3 "${SCRIPTS_DIR}/pull-wordpress-ssh.py" "$@"
+}
+
 # ── import-wpress ─────────────────────────────────────────────────────────────
 cmd_import_wpress() {
   require_site "${1:-}"
@@ -1050,6 +1067,7 @@ cmd_help() {
   echo -e "  ${BOLD}WordPress${NC}"
   echo "    wp      <site> <command>         Run a WP-CLI command"
   echo "    import <new-site> --zip ZIP --db SQL  Import ZIP + SQL into a NEW stopped WordPress site"
+  echo "    pull <new-site> --ssh ALIAS --path /absolute/wordpress/root [--dry-run]"
   echo "    import-wpress <site> [file]      Restore an All-in-One (.wpress) backup into an existing site"
   echo "    replace-url <site> <old> <new>   Replace URLs safely across the database"
   echo "    fix-rewrites <site>              Repair permalinks/REST API without rebuild"
@@ -1107,6 +1125,7 @@ cmd_help() {
   echo "    docal export-db myshop"
   echo "    docal import-db myshop"
   echo "    docal import myshop --zip site.zip --db database.sql.gz"
+  echo "    docal pull localcopy --ssh my-prod --path /var/www/html --dry-run"
   echo "    docal import-wpress myshop                # picks from wpress/*.wpress"
   echo "    docal import-wpress myshop backup.wpress"
   echo "    docal lint myshop"
@@ -1119,7 +1138,7 @@ COMMAND="${1:-help}"
 shift 2>/dev/null || true
 
 case "${COMMAND}" in
-  help|--help|-h|install|clean-certs|cc|config|version|--version|-v|doctor|update|uninstall) : ;;
+  help|--help|-h|install|clean-certs|cc|config|version|--version|-v|doctor|update|uninstall|pull) : ;;
   *) ensure_docker "$@" ;;
 esac
 
@@ -1140,6 +1159,7 @@ case "${COMMAND}" in
   export-db|edb)      cmd_export_db "$@" ;;
   import-db|idb)      cmd_import_db "$@" ;;
   import)             cmd_import "$@" ;;
+  pull)               cmd_pull "$@" ;;
   import-wpress|iw)   cmd_import_wpress "$@" ;;
   lint)               cmd_lint "$@" ;;
   clean-certs|cc)     cmd_clean_certs ;;
