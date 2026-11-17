@@ -69,6 +69,7 @@ with tempfile.TemporaryDirectory() as temp:
         if args[:3] == ["docker", "network", "inspect"]:
             return SimpleNamespace(returncode=0, stdout=json.dumps({
                 "Internal": True, "EnableIPv6": False, "Containers": {},
+                "Labels": {"docal.safe.site": "safe-fixture"},
             }), stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
