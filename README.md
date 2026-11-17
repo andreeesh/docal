@@ -145,6 +145,24 @@ That's it — no Docker Desktop, no manual WSL setup unless `docal doctor` tells
 missing. Full installation details, including the manual/no-curl path, are in
 [docs/installation.md](docs/installation.md).
 
+## Safe preview (experimental in PR #6)
+
+To inspect a restored site without enabling its plugins or joining the shared
+Traefik network, use the explicit safe preview mode:
+
+```bash
+docal start mysite --safe --port 8443
+# Visit https://mysite.localhost:8443
+docal stop mysite
+```
+
+The preview uses an internal Docker network, a separate localhost-only
+HTTPS frontend, a disposable plugin-free file copy, and an outbound traffic
+probe that must pass before starting PHP. **It shares the existing local
+database**, so browsing may change local tables. A full WSL2 Docker E2E
+validation is required before this mode is recommended for client backups.
+See [Safe preview](docs/safe-start.md).
+
 ## Common workflows
 
 ```bash
