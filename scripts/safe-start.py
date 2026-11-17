@@ -96,6 +96,7 @@ def read_site(site_dir):
 def names(slug):
     return {
         "network": "docal-" + slug + "-safe",
+        "edge_network": "docal-" + slug + "-safe-edge",
         "web": "docal-" + slug + "-safe-web",
         "tls": "docal-" + slug + "-safe-tls",
         "image": "docal/wordpress-" + slug + ":latest",
@@ -110,8 +111,8 @@ def resource_exists(kind, name):
 
 def assert_available(slug):
     obj = names(slug)
-    for key in ("network", "web", "tls"):
-        kind = "network" if key == "network" else "container"
+    for key in ("network", "edge_network", "web", "tls"):
+        kind = "network" if key in ("network", "edge_network") else "container"
         if resource_exists(kind, obj[key]):
             raise ValueError(
                 "Safe preview resource already exists: " + obj[key]
@@ -258,7 +259,11 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime):
                     str(cert) + ":/etc/docal/safe.crt:ro",
                     str(key) + ":/etc/docal/safe.key:ro",
                 ],
-                "networks": ["docal-safe-internal"],
+                # Docker Engine does not publish ports for containers whose
+                # only network is internal. Put the trusted TLS proxy on a
+                # dedicated no-masquerade bridge first so localhost port
+                # publishing works without giving WordPress another network.
+                "networks": ["safe-tls-edge", "docal-safe-internal"],
                 "read_only": True,
                 "tmpfs": ["/var/cache/nginx", "/var/run", "/tmp"],
                 "security_opt": ["no-new-privileges:true"],
@@ -267,13 +272,15 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime):
         },
         "networks": {
             "docal-safe-internal": {"external": True, "name": obj["network"]},
+            "safe-tls-edge": {"external": True, "name": obj["edge_network"]},
         },
     }
     (runtime / "compose.safe.yml").write_text(
         json.dumps(override, indent=2) + "\n", encoding="utf-8",
     )
     (runtime / "identity.json").write_text(
-        json.dumps({"site": slug, "port": port, "network": obj["network"]}),
+        json.dumps({"site": slug, "port": port, "network": obj["network"],
+                    "edge_network": obj["edge_network"]}),
         encoding="utf-8",
     )
     return obj
@@ -346,7 +353,7 @@ def safe_start(site_dir, proxy_dir, port):
         raise ValueError("rsync is required for disposable safe preview copies")
     runtime.mkdir(mode=0o700)
     obj = names(slug)
-    network_created = False
+    networks_created = []
     try:
         prepare_runtime(site_dir, proxy_dir, port, runtime)
         # Refuse to build arbitrary site Dockerfiles while entering safe mode.
@@ -358,8 +365,21 @@ def safe_start(site_dir, proxy_dir, port):
             "--label", "docal.safe.site=" + slug,
             obj["network"],
         ])
-        network_created = True
+        networks_created.append(obj["network"])
         inspect_network(obj["network"], slug)
+        invoke([
+            "docker", "network", "create", "--driver", "bridge",
+            "--opt", "com.docker.network.bridge.enable_ip_masquerade=false",
+            "--label", "docal.safe.site=" + slug,
+            obj["edge_network"],
+        ])
+        networks_created.append(obj["edge_network"])
+        edge = assert_owned_network(obj["edge_network"], slug)
+        edge_options = edge.get("Options") or {}
+        if (edge.get("Driver") != "bridge" or edge.get("Internal")
+                or edge.get("EnableIPv6") or edge.get("Containers")
+                or edge_options.get("com.docker.network.bridge.enable_ip_masquerade") != "false"):
+            raise RuntimeError("Dedicated TLS edge network is not isolated and empty")
         print("[info] Testing IPv4, IPv6 and DNS egress before starting PHP...", flush=True)
         probe_network(obj["image"], obj["network"], runtime / "resolv.conf")
         # Start the original site's DB only, never its public web service.
@@ -378,14 +398,14 @@ def safe_start(site_dir, proxy_dir, port):
                    cwd=site_dir, check=False)
             invoke([*args, "rm", "-sf", "safe-tls", "safe-web"],
                    cwd=site_dir, check=False)
-        if network_created:
+        for network in reversed(networks_created):
             # A replaced or externally modified network must not be deleted.
             try:
-                assert_owned_network(obj["network"], slug)
+                assert_owned_network(network, slug)
             except (OSError, ValueError, RuntimeError):
                 pass
             else:
-                invoke(["docker", "network", "rm", obj["network"]], check=False)
+                invoke(["docker", "network", "rm", network], check=False)
         shutil.rmtree(runtime)
         raise
 
@@ -402,16 +422,19 @@ def safe_stop(site_dir):
     if not identity_path.is_file() or identity_path.is_symlink():
         raise ValueError("Missing safe preview identity; refusing cleanup")
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    if identity.get("site") != conf["SITE_SLUG"] or identity.get("network") != obj["network"]:
+    if (identity.get("site") != conf["SITE_SLUG"]
+            or identity.get("network") != obj["network"]
+            or identity.get("edge_network") != obj["edge_network"]):
         raise ValueError("Safe preview identity mismatch; refusing cleanup")
     args = compose_args(site_dir, runtime)
     invoke([*args, "stop", "safe-tls", "safe-web"], cwd=site_dir)
     invoke([*args, "rm", "-sf", "safe-tls", "safe-web"], cwd=site_dir)
-    if resource_exists("network", obj["network"]):
-        assert_owned_network(obj["network"], conf["SITE_SLUG"])
-        invoke(["docker", "network", "rm", obj["network"]])
+    for network in (obj["network"], obj["edge_network"]):
+        if resource_exists("network", network):
+            assert_owned_network(network, conf["SITE_SLUG"])
+            invoke(["docker", "network", "rm", network])
     shutil.rmtree(runtime)
-    print("[ok] Safe preview web containers, internal network and copy removed")
+    print("[ok] Safe preview web containers, networks and copy removed")
     return True
 
 

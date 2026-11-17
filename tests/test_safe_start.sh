@@ -50,6 +50,7 @@ with tempfile.TemporaryDirectory() as temp:
     original_config = (site / "wordpress/wp-config.php").read_bytes()
     runtime = site / s.SAFE_DIR_NAME
     commands = []
+    created_networks = set()
     def fake_invoke(args, *, cwd=None, capture=False, check=True):
         commands.append(tuple(args))
         if args[0] == "rsync":
@@ -66,9 +67,18 @@ with tempfile.TemporaryDirectory() as temp:
             )
         if args[:4] == ["docker", "compose", "ps", "--status"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if args[:3] == ["docker", "network", "create"]:
+            created_networks.add(args[-1])
+        if args[:3] == ["docker", "network", "rm"]:
+            created_networks.discard(args[-1])
         if args[:3] == ["docker", "network", "inspect"]:
+            edge = args[3].endswith("-safe-edge")
             return SimpleNamespace(returncode=0, stdout=json.dumps({
-                "Internal": True, "EnableIPv6": False, "Containers": {},
+                "Driver": "bridge",
+                "Internal": not edge,
+                "EnableIPv6": False,
+                "Options": {"com.docker.network.bridge.enable_ip_masquerade": "false"} if edge else {},
+                "Containers": {},
                 "Labels": {"docal.safe.site": "safe-fixture"},
             }), stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -77,7 +87,9 @@ with tempfile.TemporaryDirectory() as temp:
     old_which, old_probe = s.shutil.which, s.probe_network
     try:
         s.invoke = fake_invoke
-        s.resource_exists = lambda kind, _name: kind == "image"
+        s.resource_exists = lambda kind, name: (
+            kind == "image" or (kind == "network" and name in created_networks)
+        )
         s.shutil.which = lambda _name: "/usr/bin/rsync"
         s.probe_network = lambda *_args: None
         s.safe_start(site, proxy, 9443)
@@ -98,14 +110,23 @@ with tempfile.TemporaryDirectory() as temp:
         assert (runtime / "resolv.conf").read_text() == "nameserver 127.0.0.1\n"
         compose = json.loads((runtime / "compose.safe.yml").read_text())
         assert compose["services"]["safe-web"]["networks"] == ["docal-safe-internal"]
+        assert compose["services"]["safe-tls"]["networks"] == [
+            "safe-tls-edge", "docal-safe-internal",
+        ]
         assert compose["services"]["safe-web"]["read_only"] is True
         assert compose["services"]["safe-tls"]["ports"][0]["host_ip"] == "127.0.0.1"
         assert compose["services"]["safe-tls"]["ports"][0]["published"] == "9443"
         assert "wordpress" not in compose["services"]
+        assert compose["networks"]["safe-tls-edge"]["name"] == "docal-safe-fixture-safe-edge"
+        assert any(
+            any("enable_ip_masquerade=false" in part for part in command)
+            for command in commands if command[:3] == ("docker", "network", "create")
+        )
         assert (site / "wordpress/wp-config.php").read_bytes() == original_config
         assert (site / "wordpress/wp-content/plugins/untrusted.php").exists()
         assert s.safe_stop(site) is True
         assert not runtime.exists()
+        assert not created_networks
 
         commands.clear()
         def failed_probe(*_args):
@@ -119,6 +140,7 @@ with tempfile.TemporaryDirectory() as temp:
             raise AssertionError("Accepted failed egress probe")
         assert not any("up" in args for args in commands)
         assert not runtime.exists()
+        assert not created_networks
         assert (site / "wordpress/wp-config.php").read_bytes() == original_config
 
         s.resource_exists = lambda kind, name: (
