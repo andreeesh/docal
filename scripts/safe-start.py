@@ -195,6 +195,16 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime):
         "expose_php = Off\n",
         encoding="utf-8",
     )
+    # Uploaded PHP is never needed for a browser smoke test and must not run.
+    # Enforce at Apache config level, independent of imported .htaccess files.
+    (runtime / "safe-apache.conf").write_text(
+        '<Directory "/var/www/html/wp-content/uploads">\n'
+        '  <FilesMatch "\\.(?i:php[0-9]*|phtml|phar)$">\n'
+        '    Require all denied\n'
+        '  </FilesMatch>\n'
+        '</Directory>\n',
+        encoding="utf-8",
+    )
     (runtime / "resolv.conf").write_text("nameserver 127.0.0.1\n", encoding="utf-8")
     (runtime / "nginx.conf").write_text(
         "server {\n"
@@ -227,6 +237,7 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime):
                     str(runtime / "wordpress") + ":/var/www/html:ro",
                     "db-socket:/var/run/mysqld",
                     str(runtime / "safe.ini") + ":/usr/local/etc/php/conf.d/zz-docal-safe.ini:ro",
+                    str(runtime / "safe-apache.conf") + ":/etc/apache2/conf-enabled/zz-docal-safe.conf:ro",
                     str(runtime / "resolv.conf") + ":/etc/resolv.conf:ro",
                 ],
                 "networks": ["docal-safe-internal"],
