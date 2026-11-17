@@ -113,6 +113,34 @@ Existing sites are never overwritten.
   access, cloud hosting APIs, bidirectional sync and remote file modification
   are intentionally out of scope.
 
+## Diagnosing remaining production references after import
+
+An assertion that *every* origin-domain reference must disappear is too broad.
+WordPress GUIDs, historical diagnostic logs, intentional external links and
+hard-coded theme/plugin file URLs have different semantics.
+
+For a disposable, isolated local QA copy:
+
+1. Locate the origin of any frontend href: post content, postmeta, menu,
+   Elementor data, widget, theme file, or generated asset. Report only the
+   table/column/row ID or local file path, not private content or credentials.
+2. Search the local database by *bare hostname*, not just an https:// URL.
+   WP-CLI supports read-only `wp db search` with `--all-tables-with-prefix`.
+   Keep the full matches private; they can contain customer data.
+3. Classify any matches in GUID columns and in `elementor_log` separately.
+   Elementor's serialized historical log may be skipped when its PHP classes
+   are unavailable under --skip-plugins; that does not imply broken pages.
+4. Fix confirmed internal links using serialization-aware WP-CLI operations
+   on a disposable local DB, with specific regression tests. Never apply
+   raw SQL REPLACE() to arbitrary PHP serialized objects. Do not activate
+   imported plugins just to make object classes available.
+5. Repeat isolated frontend/login checks to prove links stay local and no
+   redirect sends users to the original site.
+
+Intentional external links, historical GUIDs and diagnostic logs should
+not be blindly rewritten. Document any remaining occurrences and their
+nonfunctional classification. Preserve the original imported QA evidence.
+
 ## Validation status
 
 The SSH adapter has mocked SSH/rsync tests in CI. A real SSH import has **not
