@@ -246,6 +246,8 @@ cmd_stop() {
   local site_dir="${SITES_DIR}/${site}"
   if [[ -e "${site_dir}/.docal-safe-runtime" || -L "${site_dir}/.docal-safe-runtime" ]]; then
     python3 "${SCRIPTS_DIR}/safe-start.py" stop --site-dir "${site_dir}"
+    ok "Safe preview removed. Original local database left unchanged and running."
+    return
   fi
   cd "${site_dir}"
   docker compose stop
