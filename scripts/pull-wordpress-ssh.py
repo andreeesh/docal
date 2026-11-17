@@ -194,6 +194,34 @@ def invoke_import(site: str, zip_path: Path, sql_path: Path) -> None:
     ])
 
 
+def ensure_local_docker_names_unused(site: str) -> None:
+    """Refuse global Docker name collisions BEFORE remote transfer begins."""
+    # Docal site roots may be isolated while Docker Engine is still shared.
+    daemon = subprocess.run(
+        ["docker", "info", "--format", "{{.ID}}"],
+        text=True, capture_output=True, check=False,
+    )
+    if daemon.returncode != 0:
+        raise RuntimeError("Docker Engine unavailable; no SSH transfer started")
+    resources = {
+        "container": (f"docal-{site}-db", f"docal-{site}-wp"),
+        "volume": (f"{site}_db-data", f"{site}_db-socket"),
+        "image": (f"docal/wordpress-{site}:latest",),
+        "network": (f"{site}_default",),
+    }
+    for kind, names in resources.items():
+        for name in names:
+            check = subprocess.run(
+                ["docker", kind, "inspect", name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if check.returncode == 0:
+                raise ValueError(
+                    f"Docker {kind} name already exists: {name}. "
+                    "Choose a unique local site slug; existing resources were not changed."
+                )
+
 def pull(site: str, alias: str, path: str, dry_run: bool) -> None:
     path = validate(alias, path, site)
     root_path = Path(os.environ["SITES_DIR"]).absolute()
@@ -205,6 +233,9 @@ def pull(site: str, alias: str, path: str, dry_run: bool) -> None:
     for binary in ("ssh", "rsync", "python3"):
         if not shutil.which(binary):
             raise ValueError("Required local executable is missing: " + binary)
+
+    if not dry_run:
+        ensure_local_docker_names_unused(site)
 
     print("[info] Checking remote WordPress and read-only SSH prerequisites...", flush=True)
     prefix = probe(alias, path)
