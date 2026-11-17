@@ -94,6 +94,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert "DISALLOW_FILE_MODS" in copy
         assert "AUTOMATIC_UPDATER_DISABLED" in copy
         assert "sendmail_path = /bin/false" in (runtime / "safe.ini").read_text()
+        assert "Require all denied" in (runtime / "safe-apache.conf").read_text()
         assert (runtime / "resolv.conf").read_text() == "nameserver 127.0.0.1\n"
         compose = json.loads((runtime / "compose.safe.yml").read_text())
         assert compose["services"]["safe-web"]["networks"] == ["docal-safe-internal"]
