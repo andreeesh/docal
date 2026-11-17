@@ -39,6 +39,21 @@ with tempfile.TemporaryDirectory() as tmp:
     fakebin.mkdir()
     operations = root / "operations.log"
 
+    fake_docker = fakebin / "docker"
+    fake_docker.write_text("""#!/usr/bin/env python3
+import os
+import sys
+args = sys.argv[1:]
+if args[:1] == ["info"]:
+    if os.environ.get("MOCK_DOCKER_FAIL_INFO") == "1":
+        raise SystemExit(1)
+    print("disposable-docker-test-engine")
+    raise SystemExit(0)
+if len(args) == 3 and args[1] == "inspect":
+    raise SystemExit(0 if args[2] == os.environ.get("MOCK_DOCKER_CONFLICT") else 1)
+raise SystemExit(2)
+""")
+    fake_docker.chmod(0o700)
     fake_ssh = fakebin / "ssh"
     fake_ssh.write_text("""#!/usr/bin/env python3
 import os
@@ -90,6 +105,36 @@ target = Path(args[-1])
         m.pull("dry-run", "prod-alias", "/srv/wordpress", True)
         assert not operations.read_text().count("rsync:")
         assert sorted(sites.iterdir()) == []
+
+        # Docker is global even when site roots are isolated. Refuse existing
+        # container, volume, image and network names before opening SSH.
+        for name in (
+            "docal-collision-db", "docal-collision-wp",
+            "collision_db-data", "collision_db-socket",
+            "docal/wordpress-collision:latest", "collision_default",
+        ):
+            os.environ["MOCK_DOCKER_CONFLICT"] = name
+            before_log = operations.read_text()
+            try:
+                m.pull("collision", "prod-alias", "/srv/wordpress", False)
+            except ValueError as e:
+                assert name in str(e)
+            else:
+                raise AssertionError("Accepted Docker resource collision: " + name)
+            assert operations.read_text() == before_log
+            assert not (sites / "collision").exists()
+        os.environ.pop("MOCK_DOCKER_CONFLICT")
+
+        os.environ["MOCK_DOCKER_FAIL_INFO"] = "1"
+        before_log = operations.read_text()
+        try:
+            m.pull("no-daemon", "prod-alias", "/srv/wordpress", False)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("Accepted inaccessible Docker Engine")
+        assert operations.read_text() == before_log
+        os.environ.pop("MOCK_DOCKER_FAIL_INFO")
 
         observed = {}
         def inspect_import(site, zip_file, sql_file):
