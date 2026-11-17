@@ -55,21 +55,35 @@ notification emails just to test capture.
 
 ## Existing sites and SMTP plugins
 
-**Important compatibility boundary:** Docal does not silently overwrite
-existing sites' Dockerfiles, rebuild existing images or reinstall their
-plugins. Sites created before this integration will **not automatically**
-have the `msmtp-mta` transport. You may explicitly configure a trusted
-SMTP plugin on the existing site to use `docal-mailpit` on port `1025`
-without encryption/authentication **only for local development**. This
-requires the site's normal WordPress container to be on `docal-proxy`.
-Alternatively, manually apply the new Dockerfile transport configuration
-and deliberately rebuild the site after reviewing local modifications.
+Existing sites are **never modified automatically**. To capture ordinary
+WordPress `wp_mail()` messages on an existing site, explicitly install a
+Docal-managed local MU-plugin:
 
-Even when `msmtp` is installed, an SMTP plugin or custom PHP code may
-bypass PHP `mail()` and connect directly to an external mail server.
-Mailpit **cannot guarantee interception of every outgoing request** from
-arbitrary restored WordPress plugins. Review and disable real SMTP
-credentials before normal WordPress startup.
+```bash
+docal mail enable mysite
+# Later, when local email testing is finished:
+docal mail disable mysite
+```
+
+This adds only `wp-content/mu-plugins/docal-mailpit-capture.php` to
+the named local site, routing standard WordPress PHPMailer traffic to
+`docal-mailpit:1025` with authentication, TLS and STARTTLS disabled.
+It does **not** rewrite `wp-config.php`, replace the site's Dockerfile,
+rebuild any image, start WordPress or alter its database. Enabling twice
+is idempotent; if a file with this name already exists but differs, the
+command refuses to overwrite or delete it. Symlinked WordPress/MU-plugin
+paths and import-pending sites are rejected.
+
+This is a WordPress-level hook, not a replacement for the PHP sendmail
+binary. Older WordPress images may still lack `msmtp-mta` and therefore
+standalone PHP `mail()` calls outside WordPress may not work through
+Mailpit. New sites have the PHP-level transport by default.
+
+SMTP plugins can bypass `wp_mail()` (for example with a `pre_wp_mail`
+short circuit), and custom PHP code can connect directly to external SMTP
+servers. Mailpit **cannot guarantee interception of every outgoing
+request** from arbitrary restored WordPress plugins. Review and disable
+real SMTP credentials before normal WordPress startup.
 
 ## Safe Start is intentionally different
 
