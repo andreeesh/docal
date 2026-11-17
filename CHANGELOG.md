@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
 ### Added
 
 - Plugin-independent WordPress ZIP + SQL new-site importer, with archive/SQL
@@ -34,11 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Updated README, import, Safe Start, security and command guides to match
   current implementation; added release acceptance checklist.
-
-**Release note:** This section describes changes since `0.2.0` and does
-not constitute a published release or tag. Update `VERSION`, finalize the
-release heading and create a signed or annotated Git tag only after
-acceptance criteria have been reviewed on the release commit.
 
 ## [0.2.0]
 
