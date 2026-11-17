@@ -53,6 +53,25 @@ status, and the admin username. Full `.env` (including DB credentials) is at
 docal info myblog
 ```
 
+### `docal start <site> --safe [--port 8443]` (experimental)
+
+Runs a plugin-free WordPress preview from a temporary file copy on a
+new internal Docker network, with a separate TLS proxy bound only to
+localhost. A PHP IPv4/IPv6/DNS egress test must succeed (i.e., fail to
+reach outside) before the web container starts.
+
+```bash
+docal start mysite --safe --port 8443
+# Open https://mysite.localhost:8443
+docal stop mysite
+```
+
+The mode shares the site's **existing local MySQL database**, so browsing
+can modify local data. It does not start the normal shared Traefik web
+service, and it omits plugins/MU-plugins/drop-ins from the disposable
+copy. It requires rsync and a local TLS certificate. This feature is still
+awaiting real Docker E2E validation. See [Safe preview](safe-start.md).
+
 ### `docal start` / `stop` / `restart` <site>
 
 Start, stop, or restart a site's containers. `start` also starts the shared Traefik proxy if it

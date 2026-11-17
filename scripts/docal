@@ -203,29 +203,59 @@ cmd_create() {
 # ── start ─────────────────────────────────────────────────────────────────────
 cmd_start() {
   require_site "${1:-}"
-  local site="$1"
-  [[ ! -f "${SITES_DIR}/${site}/.docal-import-pending" ]] || err "Site is import-pending: finish the import before starting WordPress."
+  local site="$1"; shift || true
+  local site_dir="${SITES_DIR}/${site}"
+  [[ ! -f "${site_dir}/.docal-import-pending" ]] || err "Site is import-pending: finish the import before starting WordPress."
+  if [[ "${1:-}" == "--safe" ]]; then
+    shift
+    local port=8443
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --port)
+          [[ $# -ge 2 ]] || err "--port requires a numeric value"
+          port="$2"; shift 2 ;;
+        --port=*) port="${1#--port=}"; shift ;;
+        *) err "Unknown safe-start option: $1" ;;
+      esac
+    done
+    [[ "${port}" =~ ^[0-9]+$ ]] || err "Invalid safe HTTPS port"
+    python3 "${SCRIPTS_DIR}/safe-start.py" start \
+      --site-dir "${site_dir}" --proxy-dir "${PROXY_DIR}" --port "${port}"
+    return
+  fi
+  [[ $# -eq 0 ]] || err "Usage: docal start <site> [--safe [--port 8443]]"
+  [[ ! -e "${site_dir}/.docal-safe-runtime" && ! -L "${site_dir}/.docal-safe-runtime" ]] || \
+    err "Safe preview exists for ${site}; run docal stop ${site} before normal start."
+  if [[ -f "${site_dir}/.docal-import-pending" ]]; then
+    err "Cannot start pending WordPress import"
+  fi
+  if [[ -f "${site_dir}/.docal-imported" ]]; then
+    warn "Imported site: normal start can execute restored plugins and contact external services. Prefer: docal start ${site} --safe"
+  fi
   info "Starting '${site}'..."
   bash "${SCRIPTS_DIR}/start-proxy.sh" >/dev/null 2>&1 || true
-  cd "${SITES_DIR}/${site}"
+  cd "${site_dir}"
   docker compose up -d
   ok "$(site_url "${site}")"
 }
-
 # ── stop ──────────────────────────────────────────────────────────────────────
 cmd_stop() {
   require_site "${1:-}"
   local site="$1"
   info "Stopping '${site}'..."
-  cd "${SITES_DIR}/${site}"
+  local site_dir="${SITES_DIR}/${site}"
+  if [[ -e "${site_dir}/.docal-safe-runtime" || -L "${site_dir}/.docal-safe-runtime" ]]; then
+    python3 "${SCRIPTS_DIR}/safe-start.py" stop --site-dir "${site_dir}"
+  fi
+  cd "${site_dir}"
   docker compose stop
   ok "Containers stopped."
 }
-
 # ── restart ───────────────────────────────────────────────────────────────────
 cmd_restart() {
   require_site "${1:-}"
   local site="$1"
+  [[ ! -e "${SITES_DIR}/${site}/.docal-safe-runtime" ]] || err "Stop safe preview before restarting normal site."
   info "Restarting '${site}'..."
   cd "${SITES_DIR}/${site}"
   docker compose restart
@@ -238,6 +268,7 @@ cmd_rebuild() {
   local site="$1"
   [[ ! -f "${SITES_DIR}/${site}/.docal-import-pending" ]] || err "Site is import-pending: finish the import before starting WordPress."
   local site_dir="${SITES_DIR}/${site}"
+  [[ ! -e "${site_dir}/.docal-safe-runtime" ]] || err "Stop safe preview before rebuilding normal site."
 
   export HOST_UID="${HOST_UID:-$(id -u)}"
   export HOST_GID="${HOST_GID:-$(id -g)}"
@@ -283,6 +314,9 @@ cmd_delete() {
   [[ "${confirm}" != "${site}" ]] && { info "Cancelled."; exit 0; }
 
   echo ""
+  if [[ -e "${site_dir}/.docal-safe-runtime" || -L "${site_dir}/.docal-safe-runtime" ]]; then
+    python3 "${SCRIPTS_DIR}/safe-start.py" stop --site-dir "${site_dir}"
+  fi
   info "Removing containers and volumes..."
   cd "${site_dir}"
   docker compose down -v || true
@@ -1058,7 +1092,8 @@ cmd_help() {
   echo "    create [<site>] [options]        Create a WordPress site"
   echo "    list [--json]                    List sites"
   echo "    info    <site>                   Show status, URL, versions, credentials"
-  echo "    start   <site>                   Start containers"
+  echo "    start   <site>                   Start normal containers"
+  echo "    start   <site> --safe [--port N]  Isolated localhost-only HTTPS preview"
   echo "    stop    <site>                   Stop containers"
   echo "    restart <site>                   Restart containers"
   echo "    rebuild <site>                   Rebuild image and fix permissions"
@@ -1122,6 +1157,7 @@ cmd_help() {
   echo "    docal logs myshop"
   echo "    docal logs myshop wordpress"
   echo "    docal stop myshop"
+  echo "    docal start myshop --safe --port 8443"
   echo "    docal export-db myshop"
   echo "    docal import-db myshop"
   echo "    docal import myshop --zip site.zip --db database.sql.gz"
