@@ -549,6 +549,12 @@ def safe_start(site_dir, proxy_dir, port):
         args = compose_args(site_dir, runtime)
         print("[info] Starting disposable MySQL volume and socket...", flush=True)
         invoke([*args, "up", "-d", "--wait", "safe-db"], cwd=site_dir)
+        # Confirm Compose created our explicitly labelled private volumes;
+        # without proof of ownership, never transfer customer data into them.
+        for key in ("db_data", "db_socket"):
+            if not resource_exists("volume", obj[key]):
+                raise RuntimeError("Disposable MySQL volume was not created")
+            assert_owned_volume(obj[key], slug)
         print("[info] Streaming the LOCAL database into disposable MySQL...", flush=True)
         source_tables = local_table_count(site_dir, conf)
         if source_tables == 0:
