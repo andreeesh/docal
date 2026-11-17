@@ -66,11 +66,13 @@ docal start mysite --safe --port 8443
 docal stop mysite
 ```
 
-The mode shares the site's **existing local MySQL database**, so browsing
-can modify local data. It does not start the normal shared Traefik web
-service, and it omits plugins/MU-plugins/drop-ins from the disposable
-copy. It requires rsync and a local TLS certificate. This feature is still
-awaiting real Docker E2E validation. See [Safe preview](safe-start.md).
+The preview uses a disposable file copy and, in experimental PR #7, a
+**disposable local MySQL clone** populated through a streaming SQL export.
+WordPress does not mount the source database socket. `docal stop` removes
+the preview MySQL volumes but leaves the original local DB running. No
+original WordPress web service or shared Traefik network is started.
+Requires rsync and a local TLS certificate. The temporary-DB extension
+requires its own real Docker E2E validation. See [Safe preview](safe-start.md).
 
 ### `docal start` / `stop` / `restart` <site>
 

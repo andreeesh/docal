@@ -158,9 +158,10 @@ docal stop mysite
 
 The preview uses an internal Docker network, a separate localhost-only
 HTTPS frontend, a disposable plugin-free file copy, and an outbound traffic
-probe that must pass before starting PHP. **It shares the existing local
-database**, so browsing may change local tables. A full WSL2 Docker E2E
-validation is required before this mode is recommended for client backups.
+probe that must pass before starting PHP. In the experimental PR #7, Safe
+Start also streams the existing local MySQL data into **disposable private
+MySQL volumes** so preview browsing cannot write to the original local
+WordPress database. A dedicated Docker E2E check is required before merging.
 See [Safe preview](docs/safe-start.md).
 
 ## Common workflows

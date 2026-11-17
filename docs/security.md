@@ -17,9 +17,12 @@ Local-only bindings do **not** make a site safe to share publicly. A Cloudflare 
 The opt-in `docal start mysite --safe` uses an internal Docker network
 and disposable plugin-free copy to reduce outbound activity. A preflight
 tests connectivity from the same network before site PHP runs. This is
-**not** a substitute for real WSL2 Docker verification, and it does not
-snapshot the local MySQL database. Theme PHP can still run and mutate
-local data. See [safe preview details](safe-start.md).
+**not** a substitute for real WSL2 Docker verification. The experimental
+PR #7 extension streams the original local WordPress DB into a dedicated
+throwaway MySQL data volume, with its own socket mounted into WordPress.
+Theme PHP may mutate only that disposable database. The clone is a
+best-effort logical export, not an offsite backup. See
+[safe preview details](safe-start.md).
 ## Reporting a vulnerability
 
 Docal has no automated update-notification mechanism or telemetry. For security-sensitive findings, contact the maintainer privately rather than publishing exploit details in a public issue.

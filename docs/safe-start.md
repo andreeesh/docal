@@ -1,6 +1,6 @@
 # Safe preview of imported WordPress sites
 
-**Status:** experimental (PR #6). A real Docker/WSL2 E2E test is required before release.
+**Status:** PR #6 has been merged and passed real Docker/WSL2 E2E. The disposable-MySQL extension in PR #7 is experimental until its own E2E passes.
 
 Run:
 
@@ -27,19 +27,30 @@ normal WordPress container.
 5. Create a new Docker bridge with internal=true and IPv6 disabled, with no
    existing endpoints. Probe real IPv4, IPv6 and DNS access from a temporary
    PHP process on the same network BEFORE starting WordPress.
-6. Launch WordPress only on the internal network, mounted read-only, with
-   the existing local MySQL database accessible through the Unix socket.
-7. Launch a dedicated Nginx HTTPS frontend on the internal network. Its
-   only host port is 127.0.0.1:<port>. It does not join Docal's shared proxy
-   network and has traefik.enable=false.
-8. docal stop removes only the safe web/TLS containers, network and temporary
-   file copy, then stops the site's standard containers.
+6. Launch a **new temporary MySQL** using two private named volumes (data
+   and socket), only on the internal Docker network. Start the existing
+   LOCAL source DB if needed, then stream its data with mysqldump
+   (--single-transaction, --quick, --no-tablespaces) directly into the
+   temporary DB over a local pipe. No database export is saved to disk.
+   Compare source and clone table counts before launching WordPress.
+7. Launch WordPress only on the internal network, mounted read-only. It
+   connects solely to the disposable MySQL Unix socket. It does not mount
+   the source site's database socket or join its normal Docker networks.
+8. Launch a dedicated Nginx HTTPS frontend, joined to the internal network
+   and a second dedicated **no-masquerade bridge**. The latter permits Docker
+   to publish only 127.0.0.1:<port>, which did not work with an internal-only
+   proxy on Docker Engine 29.6.1. It never joins shared Traefik.
+9. docal stop removes only safe web/TLS/MySQL containers, private MySQL
+   volumes, both dedicated networks and the disposable file copy. The
+   original site's MySQL volumes and WordPress files are preserved.
 
 ## Important limitations
 
-- **This is not a database snapshot.** WordPress can modify the site's
-  existing LOCAL MySQL database during safe browsing. Use a disposable
-  database for reproducible tests; normal site files are preserved.
+- **The preview database is discarded on stop.** Site PHP can modify only
+  the disposable MySQL clone, not the original local site's MySQL socket.
+  The source DB is accessed by local mysqldump during cloning. The dump is
+  transactionally consistent for InnoDB tables, but not necessarily for
+  nontransactional engines. This is not a replacement for durable backups.
 - Plugins and MU-plugins are not loaded. Themes depending on them may show
   missing functionality, and theme PHP itself is not disabled.
 - The port differs from normal local URLs. Hardcoded unported URLs inside
@@ -54,6 +65,13 @@ normal WordPress container.
   **must be validated on real Docker Engine**. Mocked tests are not proof
   of network isolation. Do not use on sensitive client imports until E2E
   verification has passed.
+- Starting a preview may start the original site's LOCAL MySQL container
+  solely to read a dump; it does not launch the original site's PHP. The
+  normal source database is not connected to the preview network.
+- A full logical clone can consume disk space, take time and temporarily
+  increase source MySQL load. Use only for authorized local data.
+- If the cleanup fails, the private preview runtime is retained for
+  inspection rather than silently removing its recovery information.
 - This mode does not alter other Docal sites or the shared Traefik proxy.
 
 ## WSL2 acceptance tests before merging
@@ -65,7 +83,13 @@ Run on a disposable local WordPress fixture, not a client site:
 - Check that the normal WordPress container does not run; plugins, MU
   plugins and drop-ins are absent from the disposable copy.
 - Check loopback-only HTTPS, frontend, /wp-login.php and authenticated admin.
-- Check that temporary containers and network stop without deleting or
-  restarting unrelated containers or MySQL volumes.
-- Check a second safe start works after cleanup and a port conflict fails
-  closed. Record actual DB mutations (if any) in the disposable local DB.
+- Check the disposable MySQL has the same table count and representative
+  data as the local source. Modify a row through preview PHP and prove
+  the original DB value remains unchanged.
+- Check that temporary containers, both safe networks and private MySQL
+  data/socket volumes are removed without deleting unrelated resources
+  or the site's original database volumes.
+- Check a second safe start works after cleanup; a port conflict, bad
+  table count, source dump failure or missing MySQL image must fail closed.
+  Ensure rollback preserves the original local database and all other
+  Docker resources.
