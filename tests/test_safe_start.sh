@@ -20,7 +20,10 @@ def make_site(root):
     wp = site / "wordpress"
     wp.mkdir(parents=True)
     (site / "docker-compose.yml").write_text("services:\n  db:\n    image: mysql:8\n")
-    (site / ".env").write_text("SITE_SLUG=safe-fixture\nSITE_DOMAIN=localhost\n")
+    (site / ".env").write_text(
+        "SITE_SLUG=safe-fixture\nSITE_DOMAIN=localhost\n"
+        "DB_NAME=wpdb\nDB_USER=wpuser\nDB_PASSWORD=local_fake_secret\n"
+    )
     (wp / "wp-config.php").write_text(
         "<?php\n"
         "defined( 'WP_HOME' ) || define( 'WP_HOME', 'https://safe-fixture.localhost' );\n"
@@ -51,6 +54,8 @@ with tempfile.TemporaryDirectory() as temp:
     runtime = site / s.SAFE_DIR_NAME
     commands = []
     created_networks = set()
+    created_volumes = set()
+    clone_events = []
     def fake_invoke(args, *, cwd=None, capture=False, check=True):
         commands.append(tuple(args))
         if args[0] == "rsync":
@@ -65,8 +70,24 @@ with tempfile.TemporaryDirectory() as temp:
                     )
                 ],
             )
+        if args[:4] == ["docker", "compose", "config", "--format"]:
+            return SimpleNamespace(returncode=0,
+                                   stdout=json.dumps({"services": {"db": {"image": "mysql:8"}}}),
+                                   stderr="")
         if args[:4] == ["docker", "compose", "ps", "--status"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if args[:3] == ["docker", "compose", "up"] or (
+            args[:2] == ["docker", "compose"] and "safe-db" in args and "up" in args
+        ):
+            created_volumes.update({
+                "docal-safe-fixture-safe-db-data", "docal-safe-fixture-safe-db-socket",
+            })
+        if args[:3] == ["docker", "volume", "rm"]:
+            created_volumes.discard(args[-1])
+        if args[:3] == ["docker", "volume", "inspect"]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({
+                "Labels": {"docal.safe.site": "safe-fixture"},
+            }), stderr="")
         if args[:3] == ["docker", "network", "create"]:
             created_networks.add(args[-1])
         if args[:3] == ["docker", "network", "rm"]:
@@ -85,11 +106,16 @@ with tempfile.TemporaryDirectory() as temp:
 
     old_invoke, old_exists = s.invoke, s.resource_exists
     old_which, old_probe = s.shutil.which, s.probe_network
+    old_count, old_stream = s.local_table_count, s.stream_local_database
     try:
         s.invoke = fake_invoke
         s.resource_exists = lambda kind, name: (
-            kind == "image" or (kind == "network" and name in created_networks)
+            kind == "image"
+            or (kind == "network" and name in created_networks)
+            or (kind == "volume" and name in created_volumes)
         )
+        s.local_table_count = lambda *_args: 12
+        s.stream_local_database = lambda *_args: clone_events.append("stream")
         s.shutil.which = lambda _name: "/usr/bin/rsync"
         s.probe_network = lambda *_args: None
         s.safe_start(site, proxy, 9443)
@@ -114,6 +140,20 @@ with tempfile.TemporaryDirectory() as temp:
             "safe-tls-edge", "docal-safe-internal",
         ]
         assert compose["services"]["safe-web"]["read_only"] is True
+        db = compose["services"]["safe-db"]
+        assert db["image"] == "mysql:8"
+        assert db["networks"] == ["docal-safe-internal"]
+        assert db["ports"] if False else "ports" not in db
+        assert db["environment"]["MYSQL_DATABASE"] == "wpdb"
+        assert db["environment"]["MYSQL_USER"] == "wpuser"
+        assert "db-socket:/var/run/mysqld" not in compose["services"]["safe-web"]["volumes"]
+        assert "docal-safe-db-socket:/var/run/mysqld" in compose["services"]["safe-web"]["volumes"]
+        assert compose["services"]["safe-web"]["depends_on"] == {
+            "safe-db": {"condition": "service_healthy"}
+        }
+        assert compose["volumes"]["docal-safe-db-data"]["name"] == "docal-safe-fixture-safe-db-data"
+        assert compose["volumes"]["docal-safe-db-socket"]["name"] == "docal-safe-fixture-safe-db-socket"
+        assert clone_events == ["stream"]
         assert compose["services"]["safe-tls"]["ports"][0]["host_ip"] == "127.0.0.1"
         assert compose["services"]["safe-tls"]["ports"][0]["published"] == "9443"
         assert "wordpress" not in compose["services"]
@@ -127,6 +167,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert s.safe_stop(site) is True
         assert not runtime.exists()
         assert not created_networks
+        assert not created_volumes
 
         commands.clear()
         def failed_probe(*_args):
@@ -141,6 +182,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert not any("up" in args for args in commands)
         assert not runtime.exists()
         assert not created_networks
+        assert not created_volumes
         assert (site / "wordpress/wp-config.php").read_bytes() == original_config
 
         s.resource_exists = lambda kind, name: (
@@ -156,6 +198,7 @@ with tempfile.TemporaryDirectory() as temp:
     finally:
         s.invoke, s.resource_exists = old_invoke, old_exists
         s.shutil.which, s.probe_network = old_which, old_probe
+        s.local_table_count, s.stream_local_database = old_count, old_stream
 
 print("Safe start preview and fail-closed rollback tests passed")
 PY
