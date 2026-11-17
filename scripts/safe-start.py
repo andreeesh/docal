@@ -288,12 +288,23 @@ def ensure_no_normal_web(site_dir):
         )
 
 
-def inspect_network(name):
+def network_metadata(name):
     details = invoke(
         ["docker", "network", "inspect", name, "--format", "{{json .}}"],
         capture=True,
     ).stdout
-    data = json.loads(details)
+    return json.loads(details)
+
+
+def assert_owned_network(name, slug):
+    data = network_metadata(name)
+    if (data.get("Labels") or {}).get("docal.safe.site") != slug:
+        raise RuntimeError("Preview network is not owned by this Docal site")
+    return data
+
+
+def inspect_network(name, slug):
+    data = assert_owned_network(name, slug)
     if not data.get("Internal") or data.get("EnableIPv6"):
         raise RuntimeError("Dedicated preview network is not internal IPv4-only")
     if data.get("Containers"):
@@ -327,17 +338,17 @@ def safe_start(site_dir, proxy_dir, port):
     network_created = False
     try:
         prepare_runtime(site_dir, proxy_dir, port, runtime)
-        # Use the existing site's image, building it if missing. No imported
-        # PHP is executed by Docker build.
+        # Refuse to build arbitrary site Dockerfiles while entering safe mode.
+        # Import and standard create normally build this image already.
         if not resource_exists("image", obj["image"]):
-            invoke(["docker", "compose", "build", "wordpress"], cwd=site_dir)
+            raise ValueError("Docal WordPress image is missing; refusing automatic build in safe mode")
         invoke([
             "docker", "network", "create", "--internal", "--driver", "bridge",
             "--label", "docal.safe.site=" + slug,
             obj["network"],
         ])
         network_created = True
-        inspect_network(obj["network"])
+        inspect_network(obj["network"], slug)
         print("[info] Testing IPv4, IPv6 and DNS egress before starting PHP...", flush=True)
         probe_network(obj["image"], obj["network"], runtime / "resolv.conf")
         # Start the original site's DB only, never its public web service.
@@ -357,7 +368,13 @@ def safe_start(site_dir, proxy_dir, port):
             invoke([*args, "rm", "-sf", "safe-tls", "safe-web"],
                    cwd=site_dir, check=False)
         if network_created:
-            invoke(["docker", "network", "rm", obj["network"]], check=False)
+            # A replaced or externally modified network must not be deleted.
+            try:
+                assert_owned_network(obj["network"], slug)
+            except (OSError, ValueError, RuntimeError):
+                pass
+            else:
+                invoke(["docker", "network", "rm", obj["network"]], check=False)
         shutil.rmtree(runtime)
         raise
 
@@ -380,6 +397,7 @@ def safe_stop(site_dir):
     invoke([*args, "stop", "safe-tls", "safe-web"], cwd=site_dir)
     invoke([*args, "rm", "-sf", "safe-tls", "safe-web"], cwd=site_dir)
     if resource_exists("network", obj["network"]):
+        assert_owned_network(obj["network"], conf["SITE_SLUG"])
         invoke(["docker", "network", "rm", obj["network"]])
     shutil.rmtree(runtime)
     print("[ok] Safe preview web containers, internal network and copy removed")
