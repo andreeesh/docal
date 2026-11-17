@@ -150,6 +150,65 @@ def old_urls(site, env, prefix):
     return result
 
 
+def url_search_variants(original):
+    variants = [original]
+    scheme, authority_and_path = original.split("://", 1)
+    if scheme.lower() == "https":
+        variants.append("http://" + authority_and_path)
+    else:
+        variants.append("https://" + authority_and_path)
+    # Some builders persist same-origin links as protocol-relative URLs.
+    variants.append("//" + authority_and_path)
+    return tuple(dict.fromkeys(
+        variant
+        for candidate in variants
+        for variant in (candidate, candidate.replace("/", r"\/"))
+    ))
+
+
+TEXT_URL_SUFFIXES = {".php", ".css", ".js", ".html", ".htm", ".svg", ".xml"}
+
+
+def normalize_text_file_urls(content_root, originals, new_url):
+    """Rewrite exact source-origin URLs in copied text assets only."""
+    root = Path(content_root)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("WordPress content directory is missing or symlinked")
+
+    candidates = sorted({
+        candidate.encode("utf-8")
+        for original in originals
+        for candidate in url_search_variants(original)
+        if candidate != new_url
+    }, key=len, reverse=True)
+    replacement = new_url.encode("utf-8")
+    files_changed = 0
+    replacements = 0
+
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("Symlinked WordPress content refused during URL normalization")
+        if not path.is_file() or path.suffix.lower() not in TEXT_URL_SUFFIXES:
+            continue
+        data = path.read_bytes()
+        # Skip binary or otherwise non-text files even if they use a text suffix.
+        if b"\x00" in data:
+            continue
+        updated = data
+        file_replacements = 0
+        for candidate in candidates:
+            updated, count = re.subn(re.escape(candidate), replacement, updated,
+                                     flags=re.IGNORECASE)
+            file_replacements += count
+        if file_replacements:
+            mode = path.stat().st_mode & 0o777
+            path.write_bytes(updated)
+            path.chmod(mode)
+            files_changed += 1
+            replacements += file_replacements
+    return files_changed, replacements
+
+
 def certificate(name, proxy_dir):
     if not shutil.which("mkcert"):
         print("[warn] mkcert unavailable; no HTTPS certificate generated", file=sys.stderr)
@@ -239,6 +298,12 @@ def restore(name, archive, sqlfile):
         originals = old_urls(site, conf, prefix)
         new_url = "https://" + name + "." + domain
 
+        changed_files, file_replacements = normalize_text_file_urls(
+            site / "wordpress" / "wp-content", originals, new_url,
+        )
+        print("[info] Normalized " + str(file_replacements) +
+              " source URLs in " + str(changed_files) + " local text assets")
+
         print("[info] Normalizing imported site using temporary WP-CLI...")
         run("docker", "compose", "build", "wordpress", cwd=site)
         with no_bootstrap_plugins(site):
@@ -246,8 +311,7 @@ def restore(name, archive, sqlfile):
                 raise ValueError("Imported WordPress database is invalid")
             replaced = set()
             for original in originals:
-                variants = (original, "http://" + original[8:]) if original.startswith("https://") else (original, "https://" + original[7:])
-                for candidate in variants:
+                for candidate in url_search_variants(original):
                     if candidate not in replaced and candidate != new_url:
                         wp(site, "search-replace", candidate, new_url,
                            "--all-tables-with-prefix", "--recurse-objects",

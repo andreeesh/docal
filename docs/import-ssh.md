@@ -141,6 +141,11 @@ Intentional external links, historical GUIDs and diagnostic logs should
 not be blindly rewritten. Document any remaining occurrences and their
 nonfunctional classification. Preserve the original imported QA evidence.
 
+`elementor_log` stores historical Elementor diagnostics rather than active
+page content. Its serialized logger objects can produce WP-CLI
+"uninitialized class" warnings when plugins are skipped. Preserve those log
+entries; validate active post content and local text assets independently.
+
 ## Validation status
 
 The SSH adapter has mocked SSH/rsync tests in CI. A real SSH import has **not
