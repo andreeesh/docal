@@ -339,6 +339,9 @@ def restore(name, archive, sqlfile):
                 raise ValueError("Restored URL validation failed")
 
         certificate(name + "." + domain, Path(os.environ["PROXY_DIR"]).absolute())
+        # Persist a local-only marker so ordinary start can warn before running
+        # any imported plugin/theme PHP on the shared proxy network.
+        (site / ".docal-imported").write_text("zip-sql\n", encoding="utf-8")
         (site / ".docal-import-pending").unlink()
         print("[ok] Restored WordPress: " + new_url)
         print("[info] Local admin: " + admin)
