@@ -6,12 +6,28 @@ ARG MAX_UPLOAD_BYTES=2147483648
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libpng-dev libjpeg-dev libwebp-dev zip unzip git curl default-mysql-client \
+        libpng-dev libjpeg-dev libwebp-dev zip unzip git curl default-mysql-client msmtp-mta \
     && docker-php-ext-configure gd --with-jpeg --with-webp \
     && docker-php-ext-install gd mysqli pdo pdo_mysql \
     && apt-get clean \
     && rm -rf /var/cache/apt/lists/*
 
+# Intercept PHP mail()/WordPress wp_mail() through the local Mailpit sink.
+# No real SMTP relay, credentials or host-published SMTP port are configured.
+# The /usr/sbin/sendmail binary is supplied by msmtp-mta.
+RUN printf '%s\n' \
+    'defaults' \
+    'auth off' \
+    'tls off' \
+    'account default' \
+    'host docal-mailpit' \
+    'port 1025' \
+    'auto_from on' \
+    'maildomain docal.localhost' \
+    > /etc/msmtprc \
+ && chmod 0644 /etc/msmtprc \
+ && printf '%s\n' 'sendmail_path = "/usr/sbin/sendmail -t -i"' \
+    > /usr/local/etc/php/conf.d/zz-docal-mailpit.ini
 RUN a2enmod rewrite expires headers reqtimeout
 
 # Fallback for permalinks/REST API when .htaccess is missing the WordPress
