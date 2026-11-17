@@ -279,7 +279,14 @@ def prepare_runtime(site_dir, proxy_dir, port, runtime, mysql_image=None):
                 ],
                 "networks": ["docal-safe-internal"],
                 "healthcheck": {
-                    "test": ["CMD-SHELL", "mysqladmin ping -h localhost --silent"],
+                    # Only mark healthy after the application DB/user exists.
+                    # Double $ prevents host-side Compose interpolation.
+                    "test": [
+                        "CMD-SHELL",
+                        'MYSQL_PWD="${MYSQL_PASSWORD}" mysql --protocol=socket '
+                        '-u "${MYSQL_USER}" "${MYSQL_DATABASE}" '
+                        '-e "SELECT 1" >/dev/null 2>&1',
+                    ],
                     "interval": "5s",
                     "timeout": "3s",
                     "retries": 30,
