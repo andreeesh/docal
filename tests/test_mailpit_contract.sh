@@ -12,6 +12,7 @@ generator = (root / "scripts/start-proxy.sh").read_text()
 dockerfile = (root / "templates/Dockerfile.tpl").read_text()
 cli = (root / "scripts/docal").read_text()
 safe_start = (root / "scripts/safe-start.py").read_text()
+site_mail = (root / "scripts/mailpit-site.py").read_text()
 
 # Docal generates ~/.docal/proxy/docker-compose.yml from start-proxy.sh.
 # Guard against edits that accidentally desynchronize the two variants.
@@ -49,6 +50,12 @@ assert '["docal-safe-internal"]' in safe_start
 assert "cmd_mail()" in cli
 for command in ("start)", "stop)", "status)", "url)"):
     assert command in cli[cli.index("cmd_mail()"):cli.index("# ── install")], command
+assert 'mailpit-site.py' in cli
+assert 'require_site "$1"' in cli[cli.index("cmd_mail()"):cli.index("# ── install")]
+assert "phpmailer_init" in site_mail
+assert "PHP_INT_MAX" in site_mail
+assert "docal-mailpit" in site_mail
+assert "SMTPAutoTLS = false" in site_mail
 assert 'docker compose stop mailpit' in cli
 assert 'cmd_mail "$@"' in cli
 assert "docker compose up -d --build traefik" in generator
