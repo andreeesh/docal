@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0]
+
 ### Added
 
 - Shared Mailpit local email inbox (`docal mail start|stop|status|url`)
@@ -18,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   previously created WordPress sites, without rebuilding Docker images
   or overwriting existing MU-plugins.
 - Explicit compatibility guidance for existing sites and SMTP plugins.
+
+### Security and reliability
+
+- Bind the inbox UI to host loopback only and keep SMTP unpublished on the
+  host; verify the container, Docker network, HTTP API and internal SMTP
+  before reporting Mailpit as operational.
+- Avoid reconciling an already-running Traefik container when starting the
+  optional Mailpit service, and preserve Safe Start's isolated network and
+  `/bin/false` sendmail path.
 
 ## [0.3.0] - 2026-11-17
 

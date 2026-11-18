@@ -1,8 +1,8 @@
 # Local mail capture with Mailpit
 
-**Status:** proposed in the Mailpit feature PR; requires Docker/WSL2 E2E
-validation before merging. No existing site or its Docker containers are
-modified by opening this pull request.
+**Status:** merged into `main` after v0.3.0 and included in the planned
+v0.4.0 release. Mailpit is a local development feature; it is not enabled
+for existing sites unless explicitly requested.
 
 Mailpit is a shared **development-only SMTP sink**, not an outgoing mail
 provider. New Docal WordPress images use `msmtp-mta` to send standard
