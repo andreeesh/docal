@@ -47,8 +47,8 @@ Docal automates the ones it can, today:
 - No Docker Desktop — Docker Engine runs natively inside WSL2
 
 The ZIP + SQL importer, SSH pull and isolated Safe Start are implemented.
-See [Roadmap](#roadmap) for planned capabilities such as Mailpit,
-snapshots and automatic source detection.
+See [Roadmap](#roadmap) for planned capabilities such as durable snapshots
+and automatic source detection.
 
 ## From production to local
 
@@ -172,6 +172,25 @@ networks, while leaving the original local database running. These behaviors
 were validated on Docker Engine in WSL2 with a synthetic WordPress site.
 See [Safe preview](docs/safe-start.md) for limitations.
 
+## Local email capture (Mailpit)
+
+Docal provides a shared, loopback-only Mailpit inbox for normal local
+WordPress development:
+
+```bash
+docal mail start
+docal mail status
+# Browse http://localhost:8025
+```
+
+New WordPress images route the default PHP `mail()` / WordPress
+`wp_mail()` transport into Mailpit, **not to real recipients**.
+Safe Start continues to block outgoing mail and does not join the shared
+Mailpit network. Existing sites are not modified automatically; use `docal mail enable mysite`
+for an opt-in reversible WordPress mail hook. Custom SMTP plugins may still
+bypass local capture.
+See [Mailpit setup and safety limits](docs/mailpit.md).
+
 ## Common workflows
 
 ```bash
@@ -227,7 +246,7 @@ supports.
 | Per-project PHP version | Yes | Yes | Yes | Yes | Yes |
 | Per-project DB version | Yes | Yes | Yes | Yes, but changing it isn't live | Not documented |
 | Automatic local HTTPS | Yes (mkcert) | Yes (mkcert) | Conditional, per-service | Likely yes¹ | Not documented |
-| Local email capture | Not yet (Roadmap) | Yes (Mailpit, built in) | Via official plugin, not on by default | Likely yes¹ | Not documented |
+| Local email capture | Yes, shared Mailpit (new images) | Yes (Mailpit, built in) | Via official plugin, not on by default | Likely yes¹ | Not documented |
 | Distinctive feature | WordPress-specific import/cleanup workflow | `ddev get` add-on registry | Per-framework "recipes" | Live Links, Blueprints | Ships the matching core PHPUnit suite |
 
 ¹ Reported by Local's own community/help docs but not verified here against a single canonical
@@ -270,6 +289,7 @@ generality is a real advantage Docal doesn't try to match.
 - [Architecture](docs/architecture.md)
 - [Security notes](docs/security.md)
 - [Safe preview](docs/safe-start.md)
+- [Local email capture (Mailpit)](docs/mailpit.md)
 - [Release checklist](docs/release-checklist.md)
 
 ## Roadmap
@@ -277,7 +297,6 @@ generality is a real advantage Docal doesn't try to match.
 Nothing below exists yet — it's what's planned, in rough priority order.
 
 **Planned**
-- Mailpit for local email capture, shared across all sites
 - Optional source auto-detection for future import adapters (the current ZIP + SQL
   importer uses explicit --zip and --db arguments)
 - `docal open` / `docal admin` — open a site (or its wp-admin) in the Windows browser

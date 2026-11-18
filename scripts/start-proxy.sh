@@ -41,6 +41,22 @@ services:
     networks:
       - docal-proxy
 
+  # Shared SMTP sink for LOCAL development, never a delivery relay.
+  # The SMTP port (1025) is reachable only by containers on docal-proxy.
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    container_name: docal-mailpit
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_MAX_AGE: "7d"
+      MP_DISABLE_VERSION_CHECK: "true"
+    ports:
+      - "127.0.0.1:8025:8025"
+    labels:
+      - traefik.enable=false
+    networks:
+      - docal-proxy
 networks:
   docal-proxy:
     external: true
@@ -51,6 +67,16 @@ if ! docker network inspect docal-proxy >/dev/null 2>&1; then
 fi
 
 cd "${PROXY_DIR}"
-docker compose up -d --build
+# Do not reconcile or recreate a running Traefik container just to start
+# Mailpit. If Traefik is absent or stopped, bring it up as usual.
+if ! docker inspect --format '{{.State.Running}}' docal-traefik 2>/dev/null | grep -qx true; then
+  docker compose up -d traefik
+fi
+
+if docker compose up -d mailpit; then
+  echo "[ok] Mailpit inbox at http://localhost:8025"
+else
+  echo "[warn] Mailpit could not start (check loopback port 8025); Traefik remains running." >&2
+fi
 
 echo "[ok] Traefik proxy running at http://localhost:8080"

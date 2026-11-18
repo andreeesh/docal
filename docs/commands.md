@@ -198,6 +198,29 @@ picker over `.sql.gz` files already in the site directory.
 
 ## Development
 
+### `docal mail [start|stop|status|url]`
+
+Manages the shared local-only Mailpit inbox (no live email delivery):
+
+```bash
+docal mail start
+docal mail status
+docal mail url               # http://localhost:8025
+docal mail stop
+```
+
+The Mailpit web UI is exposed only to `127.0.0.1:8025`. SMTP uses
+`docal-mailpit:1025` **only** inside Docker's `docal-proxy` network;
+SMTP port 1025 is not published to the host. Normal new Docal WordPress
+images use `msmtp-mta` for default PHP `mail()`/`wp_mail()`, whereas
+Safe Start continues to disable sendmail and outbound network access.
+Existing images are not silently changed. Opt in to WordPress-level
+capture with `docal mail enable <site>` and remove it with
+`docal mail disable <site>`, without rebuilding WordPress. These
+commands fail closed for unexpected existing MU-plugin files and symlinks.
+See [Mailpit setup](mailpit.md) for testing and security limits.
+
+
 ### `docal exec <site> [command]`
 
 Runs a command in the WordPress container (default: `bash`).
@@ -254,4 +277,6 @@ to delete them.
 ### `docal proxy [start|stop|restart|status]`
 
 Manages the shared Traefik proxy. The dashboard is at `http://localhost:8080` (no
-authentication — local-only, see [security.md](security.md)).
+authentication — local-only, see [security.md](security.md)). Starting the
+proxy also attempts to start shared Mailpit; a Mailpit port conflict must
+not stop Traefik.

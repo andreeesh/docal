@@ -30,6 +30,32 @@ was imported, and theme PHP can still execute. Safe Start is not a substitute
 for tested backups, OS hardening or sandboxing untrusted code. See
 [safe preview details](safe-start.md).
 
+## Local email capture (Mailpit)
+
+Mailpit listens on localhost-only HTTP port `8025` with no login.
+Its SMTP listener (`docal-mailpit:1025`) is **not published** outside
+Docker's shared `docal-proxy` network. Mailpit receives messages from
+normal Docal WordPress PHP `mail()` / `wp_mail()` for newly generated
+images using `msmtp-mta`. It has no configured SMTP forwarding and is
+not a live email delivery service.
+
+Captured messages are shared across all local sites and can contain
+private addresses, access tokens and password-reset URLs. Treat the UI
+and the workstation as sensitive; never expose the inbox through a
+reverse proxy, LAN port, Cloudflare Tunnel or a browser-sharing service.
+
+Existing WordPress sites are not modified automatically. The explicit
+`docal mail enable <site>` command creates a single Docal-owned
+`mu-plugins/docal-mailpit-capture.php` file to redirect standard WordPress
+PHPMailer messages; `docal mail disable <site>` removes only the original
+unmodified file. It does not alter the database or rebuild containers.
+
+Mailpit cannot stop a custom SMTP plugin or PHP code from contacting an
+external service directly. The Safe Start isolated preview deliberately
+overrides PHP sendmail with `/bin/false` and does not join Mailpit's
+shared network. Review restored plugins before a normal local start.
+See [Mailpit](mailpit.md).
+
 ## Reporting a vulnerability
 
 Docal has no automated update-notification mechanism or telemetry. For security-sensitive findings, contact the maintainer privately rather than publishing exploit details in a public issue.

@@ -92,6 +92,23 @@ bundled MariaDB client.
   web/MySQL containers, networks and files. It leaves the original
   local DB running. See [Safe preview](safe-start.md).
 
+## Mail capture architecture
+
+The shared proxy stack also contains `docal-mailpit` on `docal-proxy`.
+Its UI is bound to host `127.0.0.1:8025`; its SMTP port `1025`
+is only available to other containers in that Docker network.
+
+New WordPress images include `msmtp-mta` with PHP sendmail configured
+to relay ordinary `mail()`/`wp_mail()` into the local Mailpit sink.
+The generated PHP image does **not** include any external SMTP relay
+credentials. Existing sites are deliberately not overwritten or rebuilt.
+The opt-in `docal mail enable <site>` command installs a Docal-owned
+WordPress MU-plugin that switches standard PHPMailer to the local SMTP
+sink; `docal mail disable` removes it only if unmodified. Both commands
+preserve original WordPress configuration and unrelated plugins. The isolated Safe Start preview
+remains on separate networks and uses `sendmail_path = /bin/false`.
+See [Mailpit](mailpit.md).
+
 ## Docker preflight
 
 No Docker Desktop dependency — Docker Engine runs natively inside WSL2, managed by systemd.
