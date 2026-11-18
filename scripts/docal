@@ -764,10 +764,16 @@ cmd_mail() {
   case "${sub}" in
     start)
       bash "${SCRIPTS_DIR}/start-proxy.sh" || err "Could not start shared proxy"
-      if ! docker inspect --format '{{.State.Running}}' docal-mailpit 2>/dev/null | grep -qx true; then
-        err "Mailpit is not running; check Docker logs and whether loopback port 8025 is available"
-      fi
-      ok "Mailpit inbox: ${url} (SMTP: docal-mailpit:1025, Docker only)"
+      local attempts=15 check_output=""
+      while (( attempts > 0 )); do
+        if check_output="$(python3 "${SCRIPTS_DIR}/mailpit-health.py" 2>&1)"; then
+          ok "Mailpit inbox: ${url} (SMTP: docal-mailpit:1025, Docker only)"
+          return 0
+        fi
+        attempts=$((attempts - 1))
+        (( attempts == 0 )) || sleep 1
+      done
+      err "Mailpit did not become operational after 15 seconds. ${check_output} Check Docker logs and whether loopback port 8025 is available."
       ;;
     stop)
       if [[ ! -f "${PROXY_DIR}/docker-compose.yml" ]]; then
@@ -778,10 +784,11 @@ cmd_mail() {
       ok "Mailpit stopped; Traefik and WordPress sites were not stopped."
       ;;
     status)
-      if docker inspect --format '{{.State.Running}}' docal-mailpit 2>/dev/null | grep -qx true; then
+      local check_output=""
+      if check_output="$(python3 "${SCRIPTS_DIR}/mailpit-health.py" 2>&1)"; then
         ok "Mailpit running at ${url} (SMTP accessible only inside Docker)"
       else
-        warn "Mailpit is stopped; start it with: docal mail start"
+        warn "Mailpit is not operational: ${check_output}. Try: docal mail start"
         return 1
       fi
       ;;

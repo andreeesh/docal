@@ -8,9 +8,12 @@ on:
       - 'proxy/docker-compose.yml'
       - 'scripts/start-proxy.sh'
       - 'scripts/docal'
+      - 'scripts/mailpit-health.py'
       - 'scripts/mailpit-site.py'
       - 'templates/Dockerfile.tpl'
       - 'tests/test_mailpit_contract.sh'
+      - 'tests/test_mailpit_health.sh'
+      - 'tests/test_mailpit_health.py'
       - 'tests/test_mailpit_existing_site.sh'
   push:
     branches: [main]
@@ -19,9 +22,12 @@ on:
       - 'proxy/docker-compose.yml'
       - 'scripts/start-proxy.sh'
       - 'scripts/docal'
+      - 'scripts/mailpit-health.py'
       - 'scripts/mailpit-site.py'
       - 'templates/Dockerfile.tpl'
       - 'tests/test_mailpit_contract.sh'
+      - 'tests/test_mailpit_health.sh'
+      - 'tests/test_mailpit_health.py'
       - 'tests/test_mailpit_existing_site.sh'
 
 permissions:
@@ -47,6 +53,7 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:8025/api/v1/messages >/dev/null
+          python3 scripts/mailpit-health.py
 
           # The SMTP listener must NOT be published on the host.
           [[ "$(docker port docal-mailpit 8025/tcp)" == '127.0.0.1:8025' ]]

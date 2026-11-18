@@ -58,8 +58,9 @@ assert "docal-mailpit" in site_mail
 assert "SMTPAutoTLS = false" in site_mail
 assert 'docker compose stop mailpit' in cli
 assert 'cmd_mail "$@"' in cli
-assert "docker compose up -d --build traefik" in generator
+assert "docker compose up -d traefik" in generator
 assert "if docker compose up -d mailpit" in generator
+assert "mailpit-health.py" in cli
 
 print("Mailpit proxy, PHP sendmail, safe-preview and CLI contracts passed")
 PY

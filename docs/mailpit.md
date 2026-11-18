@@ -21,7 +21,12 @@ docal mail stop
 - Web inbox: **http://localhost:8025** (host `127.0.0.1` only).
 - SMTP address inside Docker: **`docal-mailpit:1025`** on the shared
   `docal-proxy` network. Port `1025` is **not published** to the host.
-- `docal mail start` also brings up the shared Traefik proxy if necessary.
+- `docal mail start` brings up Traefik only when it is absent or stopped, then
+  waits up to 15 seconds for Mailpit's container, network, loopback HTTP API
+  and Docker-internal SMTP connection to pass operational checks. It returns
+  an error with a diagnostic if any check fails. `docal mail status` runs the
+  same checks without waiting; a running container alone is not considered
+  ready.
 - `docal mail stop` stops **only Mailpit**, not Traefik, MySQL or sites.
 - Starting the regular Docal proxy/site also attempts to start Mailpit;
   a conflict on port `8025` should not take down Traefik.
@@ -111,7 +116,8 @@ you have reviewed the restored site's plugins and SMTP configuration.
 
 ## Troubleshooting
 
-- `docal mail status`: ensure the Mailpit container is running.
+- `docal mail status`: verify the container, `docal-proxy` attachment, exact
+  loopback HTTP publication, API response and internal SMTP connectivity.
 - `docker logs docal-mailpit`: inspect container startup errors.
 - Port `8025` busy? Identify the conflicting process; do not change
   Traefik or delete unrelated containers to fix it.
