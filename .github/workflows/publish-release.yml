@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version from VERSION (for example 0.3.0)'
+        description: 'Version from VERSION (for example 0.4.0)'
         required: true
         type: string
 
@@ -61,7 +61,7 @@ jobs:
               exit 1
             }
           fi
-          for job in tests shell-checks; do
+          for job in tests shell-checks mailpit-docker; do
             result="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
               --jq ".check_runs[] | select(.name == \"$job\") | .conclusion" | sort -u)"
             if [[ "$result" != success ]]; then
