@@ -91,7 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - README rewritten around "bring a WordPress site to local" as the core workflow, with an honest
   comparison to DDEV/Lando/Local/wp-env and a Roadmap section for work not yet built.
 
-### Roadmap (not implemented in this release — see README)
+### Roadmap at 0.2.0 (planned then; see README for current status)
 
-Mailpit, `docal open`/`admin`, a unified `docal import`, `docal db shell`/`reset`, snapshots,
-shell completion, `docal pull` and other production-to-local sync work.
+At the 0.2.0 release, Mailpit, `docal open`/`admin`, a unified `docal import`,
+`docal db shell`/`reset`, snapshots, shell completion, `docal pull` and other
+production-to-local sync work were planned. Some items have since shipped;
+the current CLI roadmap is in the README.
