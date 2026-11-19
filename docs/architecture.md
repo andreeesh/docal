@@ -14,6 +14,7 @@
 │   │   ├── import-wordpress-zip-sql.py # new-site importer
 │   │   ├── pull-wordpress-ssh.py   # read-only-designed SSH acquisition
 │   │   ├── safe-start.py          # disposable file + MySQL preview
+│   │   ├── snapshot_store.py      # private snapshot storage primitives
 │   │   ├── start-proxy.sh
 │   │   ├── ensure-wp-rewrites.sh
 │   │   ├── fix-wp-permissions.sh
@@ -34,6 +35,7 @@
     ├── Dockerfile
     ├── uploads.ini
     ├── .env                        # per-site credentials and settings
+    ├── .docal-snapshot-identity.json # random identity + path binding (created on use)
     ├── .docal-imported             # marker for imported sites (when applicable)
     ├── .docal-safe-runtime/        # temporary preview; deleted by safe stop
     └── wordpress/                  # WordPress source
@@ -53,6 +55,34 @@ whether the clone it's running from has a non-empty `sites/` folder — if so, t
 as `sites_dir` and saved to `~/.docal/config`, instead of silently starting a second, empty
 `~/Sites`. Nothing is moved or renamed. See `resolve_sites_dir()` in
 `scripts/lib-config.sh`.
+
+## Snapshot storage foundation
+
+`scripts/snapshot_store.py` provides filesystem-only primitives for the
+planned snapshot feature: configurable private storage, path-bound per-site
+identity, per-site process locks, sortable IDs, versioned JSON manifests,
+SHA-256 verification and staged atomic publication. It does not depend on
+Docker Compose and is not connected to the CLI yet. No `docal snapshot`
+commands are available; it does not create database or WordPress backups.
+
+The default store is `${XDG_DATA_HOME:-~/.local/share}/docal/snapshots`;
+`DOCAL_SNAPSHOTS_DIR` can override it with an absolute path. It is kept
+outside both the site directory and `~/.docal`, so deleting a site or
+uninstalling Docal does not remove stored snapshots. Per-site identity files
+contain a random ID and a hash binding to the canonical site path, not the
+path itself. Snapshot manifests use a strict versioned schema and contain
+only allow-listed non-secret metadata. Staged writes remain hidden until the
+verified snapshot directory is atomically published.
+SHA-256 checks detect accidental corruption; they are not signatures and do
+not protect against an actor who can rewrite both a payload and its manifest.
+If another operation removes a site's identity marker, the stored payloads
+remain on disk, but the foundation does not yet provide a relink/recovery
+command.
+
+The module exposes stable error codes and JSON-serializable results so future
+CLI and Desktop clients can share the same storage implementation. Snapshot
+creation, restore, deletion, retention and Docker-volume switching are still
+future work.
 
 ## How `docal create` works
 
