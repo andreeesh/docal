@@ -4,7 +4,7 @@ Docal is intended for **local development only**, not production hosting.
 
 - New WordPress sites receive a randomly generated administrator password, displayed during initial creation. The administrator username defaults to `admin` and is configurable.
 - Existing WordPress administrator credentials are not reset when a site is reconfigured.
-- After a `.wpress` import, Docal attempts to set a new random password for the local administrator and reports failure if this cannot be done. The import workflow has not yet been validated with a disposable end-to-end backup.
+- After a `.wpress` import, Docal attempts to set a new random password for the local administrator and reports failure if this cannot be done. The `.wpress` integration depends on the compatible All-in-One WP Migration plugin/extension; this release's end-to-end validation focused on ZIP + SQL, SSH pull and Safe Start, not a disposable `.wpress` fixture.
 - Database credentials are generated randomly and stored in plaintext in `<site-dir>/.env`.
 - Generated site configuration may contain the initial administrator password. Protect site files and avoid sharing them.
 - Traefik binds ports 80, 443 and 8080 to `127.0.0.1` by default. Its dashboard has no authentication, even though it is loopback-only.

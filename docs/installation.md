@@ -1,7 +1,10 @@
 # Installation
 
-Docal targets **WSL2** on Windows, running a Debian/Ubuntu-family distro, with Docker Engine
-installed natively (no Docker Desktop).
+Docal targets **WSL2 on Windows 11** with Docker Engine running inside the Linux
+distribution (no Docker Desktop). Ubuntu is the validated distribution. The
+installer recognizes Debian/Ubuntu-family systems, but other distributions
+have not been validated; they may require you to install and configure Docker
+Engine yourself. Do not treat them as officially supported targets.
 
 ## Quick install
 
@@ -33,10 +36,14 @@ docal create mysite
 4. Symlinks `scripts/docal` onto your `PATH`.
 5. Creates `~/.docal/proxy/` (Traefik + certificates) and an empty `~/.docal/config`.
 
-It does **not** install Docker, mkcert, or anything else — `docal doctor` (see
-[troubleshooting.md](troubleshooting.md)) checks for those and any Docker-touching `docal` command
-installs/starts Docker Engine automatically on first use. mkcert has to be installed manually
-(see below); `docal doctor` will tell you if it's missing.
+It does **not** install Docker or mkcert during installation. `docal doctor`
+(see [troubleshooting.md](troubleshooting.md)) checks the environment; when a
+Docker-dependent command runs, Docal can install Docker Engine through the
+official Ubuntu apt repository and start the daemon. This automatic path
+assumes a supported Ubuntu-based WSL distribution with systemd and apt. On
+other distributions, install and configure Docker Engine yourself. mkcert
+must be installed manually (see below); `docal doctor` reports if it is
+missing.
 
 ## Manual install
 
@@ -86,7 +93,7 @@ Reopen your WSL terminal and confirm systemd is active:
 ps -p 1   # should show "systemd", not "init"
 ```
 
-**2. Install Docker Engine (official repo, not the Ubuntu one)**
+**2. Install Docker Engine from Docker's official Ubuntu repository**
 
 ```bash
 sudo apt-get update
@@ -119,7 +126,9 @@ docker run hello-world
 docker compose version
 ```
 
-From here on, Docker starts automatically every time you open a WSL terminal.
+After this setup, Docal starts the Docker daemon when a Docker-dependent
+command needs it. Starting WSL alone does not necessarily start Docker unless
+you separately enable the Docker service.
 
 ## Install mkcert
 
@@ -138,3 +147,9 @@ docal uninstall     # removes the docal command and ~/.docal; sites and their co
 ```
 
 See [configuration.md](configuration.md) for where your sites and global settings actually live.
+
+`docal update` only updates an existing clean Git checkout on `main`, using a
+fast-forward pull. The installer applies the same safeguards and refuses to
+overwrite local changes or untracked files. Neither command moves or deletes
+site data. Review `docal doctor` output after updating if required tools or
+services are unavailable.

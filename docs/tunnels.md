@@ -16,7 +16,7 @@ normal local development.**
 - `cloudflared` installed and logged in:
 
 ```bash
-sudo apt-get install cloudflared   # or see https://pkg.cloudflare.com/cloudflared
+sudo apt-get install cloudflared   # see https://developers.cloudflare.com/tunnel/downloads/
 cloudflared login                  # one-time, opens a browser, saves ~/.cloudflared/cert.pem
 export DOCAL_TUNNEL_DOMAIN=example.com   # a domain you control in Cloudflare DNS
 ```
