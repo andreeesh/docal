@@ -46,9 +46,9 @@ Docal automates the ones it can, today:
 - Optional Cloudflare Tunnel for sharing a site publicly
 - No Docker Desktop — Docker Engine runs natively inside WSL2
 
-The ZIP + SQL importer, SSH pull and isolated Safe Start are implemented.
-See [Roadmap](#roadmap) for planned capabilities such as durable snapshots
-and automatic source detection.
+The ZIP + SQL importer, SSH pull, Safe Start and local Mailpit integration are
+implemented in the CLI. See [Roadmap](#roadmap) for work that is still planned;
+the Desktop interface is not part of the v0.4.0 CLI release.
 
 ## From production to local
 
@@ -147,8 +147,9 @@ docal doctor
 docal create mysite
 ```
 
-That's it — no Docker Desktop, no manual WSL setup unless `docal doctor` tells you something's
-missing. Full installation details, including the manual/no-curl path, are in
+That's it — no Docker Desktop. `docal doctor` reports missing prerequisites;
+Docker Engine may be installed automatically when a Docker-dependent command
+runs. Full installation details, including the manual/no-curl path, are in
 [docs/installation.md](docs/installation.md).
 
 ## Safe preview — disposable WordPress and MySQL
@@ -294,7 +295,9 @@ generality is a real advantage Docal doesn't try to match.
 
 ## Roadmap
 
-Nothing below exists yet — it's what's planned, in rough priority order.
+The items below are planned CLI capabilities, in rough priority order. They
+are not available in the v0.4.0 CLI release. This list does not describe the
+separate Desktop interface work.
 
 **Planned**
 - Optional source auto-detection for future import adapters (the current ZIP + SQL

@@ -1,8 +1,9 @@
 # Local mail capture with Mailpit
 
-**Status:** merged into `main` after v0.3.0 and included in the planned
-v0.4.0 release. Mailpit is a local development feature; it is not enabled
-for existing sites unless explicitly requested.
+**Status:** implemented on `main` and included in the prepared v0.4.0
+release. Mailpit is strictly a local development feature; it is not enabled
+for existing sites unless explicitly requested. It is not a mail relay or a
+security control for arbitrary plugin code.
 
 Mailpit is a shared **development-only SMTP sink**, not an outgoing mail
 provider. New Docal WordPress images use `msmtp-mta` to send standard

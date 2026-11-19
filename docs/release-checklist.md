@@ -26,8 +26,10 @@ the last published `VERSION` or Git tag.
 
 - [ ] `main` is protected against force pushes and deletion; changes
   enter through pull requests with the required CI jobs.
-- [ ] Required status checks `tests`, `shell-checks` and `mailpit-docker`
+- [ ] The active `main` ruleset requires `tests` and `shell-checks`; both
   pass on the **exact release SHA**, not only the previous PR head.
+- [ ] The Publish Docal Release workflow additionally requires
+  `mailpit-docker` to pass on that exact SHA before it can create a tag.
 - [ ] Python source files under `scripts/` parse without writing
   `__pycache__` into user worktrees.
 - [ ] All `tests/*.sh` pass, including source DB isolation and
@@ -76,8 +78,11 @@ the last published `VERSION` or Git tag.
   bypass capture; themes still execute PHP; source remote files/DB are not
   atomic snapshots; historical external links may remain; and local CA
   trust can vary by browser.
-- [ ] Confirm docs and `CHANGELOG.md` no longer refer to merged features
-  as pending PRs. Do not claim `.wpress` E2E if not validated.
+- [ ] Confirm current user-facing docs describe merged features as available
+  and distinguish planned CLI capabilities from separate Desktop work. Do
+  not claim `.wpress` E2E if not validated. The `CHANGELOG.md` roadmap under
+  0.2.0 records what was planned at that historical release; it is not the
+  current roadmap.
 - [ ] Select release version intentionally: `0.4.0` includes Mailpit and
   its operational checks; `v0.3.0` is already published and must not be
   retagged or overwritten.
