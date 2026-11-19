@@ -304,7 +304,9 @@ separate Desktop interface work.
   importer uses explicit --zip and --db arguments)
 - `docal open` / `docal admin` — open a site (or its wp-admin) in the Windows browser
 - `docal db shell` / `docal db reset` (with strong confirmation)
-- Snapshots (`docal snapshot <site> [label]`) for quick before/after database backups
+- Snapshot commands (`docal snapshot ...`) for before/after database backups. The private
+  storage, identity and manifest foundation is implemented internally, but snapshot CLI
+  operations are not available yet.
 - Shell completion (bash/zsh), especially for site names
 
 **Under consideration**
